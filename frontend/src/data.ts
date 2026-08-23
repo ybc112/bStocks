@@ -33,6 +33,9 @@ export type Token = {
   ca: string; dev: string; deadlineH: number; listAt?: string; color: string;
   mech: { burn: number; mkt: number; holder: string; buyback: number; lp: number; burndiv: boolean };
   spark: number[];
+  refundTs?: number;
+  mintLive?: boolean;
+  mcapSym?: string;
 };
 
 const sp = (a: number[]) => a;

@@ -132,6 +132,7 @@ contract LaunchpadFactory {
         require(baseTokenWhitelist[base], "BASE");
         address tokenAddr = deployer.revealAndDeploy(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt, user);
         StocksToken t = StocksToken(payable(tokenAddr));
+        t.acceptOwnership();
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;

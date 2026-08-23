@@ -1,17 +1,106 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 import { Icon, Logo, Modal, useI18n, useToast } from "./ui";
 import { short } from "../data";
 import type { K } from "../i18n";
+import { detectWallets, connectWallet, silentCheck, getBrowserProvider, ensureBscChain } from "../web3";
+import type { DetectedWallet } from "../web3";
+import type { JsonRpcSigner } from "ethers";
 
-/* ---------------- wallet context ---------------- */
-type WalletVal = { addr: string | null; setAddr: (a: string | null) => void };
-const WalletCtx = createContext<WalletVal>({ addr: null, setAddr: () => {} });
+/* ---------------- wallet context (real window.ethereum) ---------------- */
+type WalletVal = {
+  addr: string | null;
+  isBsc: boolean;
+  connecting: string | null;
+  connect: (w: DetectedWallet) => Promise<void>;
+  disconnect: () => void;
+  getSigner: () => Promise<JsonRpcSigner | null>;
+  wallets: DetectedWallet[];
+};
+const WalletCtx = createContext<WalletVal>({
+  addr: null, isBsc: false, connecting: null,
+  connect: async () => {}, disconnect: () => {}, getSigner: async () => null, wallets: [],
+});
 export const useWallet = () => useContext(WalletCtx);
+
 export function WalletProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [addr, setAddr] = useState<string | null>(null);
-  return <WalletCtx.Provider value={{ addr, setAddr }}>{children}</WalletCtx.Provider>;
+  const [isBsc, setIsBsc] = useState(false);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [wallets, setWallets] = useState<DetectedWallet[]>([]);
+  const activeRef = useRef<DetectedWallet | null>(null);
+
+  useEffect(() => {
+    const ws = detectWallets();
+    setWallets(ws);
+    if (!ws.length) return;
+    const primary = ws.find((w) => w.id !== "okx") ?? ws[0];
+    activeRef.current = primary;
+    void (async () => {
+      const a = await silentCheck(primary);
+      if (a) {
+        setAddr(a);
+        setIsBsc(await ensureBscChain(primary.provider).catch(() => false));
+      }
+    })();
+    const onAccounts = (...args: never[]) => {
+      const accs = args[0] as string[] | undefined;
+      setAddr(accs?.[0] ?? null);
+    };
+    const onChain = () => {
+      void (async () => {
+        if (!activeRef.current) return;
+        setIsBsc(await ensureBscChain(activeRef.current.provider).catch(() => false));
+      })();
+    };
+    for (const w of ws) {
+      w.provider.on?.("accountsChanged", onAccounts as never);
+      w.provider.on?.("chainChanged", onChain as never);
+    }
+    return () => {
+      for (const w of ws) {
+        w.provider.removeListener?.("accountsChanged", onAccounts as never);
+        w.provider.removeListener?.("chainChanged", onChain as never);
+      }
+    };
+  }, []);
+
+  const connect = useCallback(
+    async (w: DetectedWallet) => {
+      setConnecting(w.name);
+      try {
+        const { addr: a, chainOk } = await connectWallet(w);
+        activeRef.current = w;
+        setAddr(a);
+        setIsBsc(chainOk);
+        toast(`${w.name} · ${t("connected")}`);
+      } catch (e) {
+        const msg = (e as Error).message || "connect failed";
+        toast(`${w.name}: ${msg.includes("no account") ? t("need_wallet") : msg}`, "warn");
+      } finally {
+        setConnecting(null);
+      }
+    },
+    [t, toast]
+  );
+
+  const disconnect = useCallback(() => setAddr(null), []);
+
+  const getSigner = useCallback(async () => {
+    const w = activeRef.current;
+    if (!w) return null;
+    const bp = getBrowserProvider(w);
+    return bp.getSigner();
+  }, []);
+
+  return (
+    <WalletCtx.Provider value={{ addr, isBsc, connecting, connect, disconnect, getSigner, wallets }}>
+      {children}
+    </WalletCtx.Provider>
+  );
 }
 
 const NAV: { k: K; to: string }[] = [
@@ -22,24 +111,21 @@ const NAV: { k: K; to: string }[] = [
   { k: "nav_assets", to: "/assets" },
 ];
 
+const WALLET_ICON: Record<string, { c: string; icon: string }> = {
+  metamask: { c: "#F6851B", icon: "M12 3 4 7l1.5 11L12 21l6.5-3L20 7l-8-4z" },
+  okx: { c: "#E9EEFF", icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
+  trust: { c: "#3375BB", icon: "M12 2 4 6v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6l-8-4z" },
+  bitget: { c: "#00F0FF", icon: "M5 12h4l3-7 4 14 3-7h2" },
+  browser: { c: "#9b6bff", icon: "M4 6h16v12H4zM4 10h16" },
+};
+
 export default function Header() {
   const { lang, setLang, t } = useI18n();
-  const { addr, setAddr } = useWallet();
+  const { addr, isBsc, connect, disconnect, connecting, wallets } = useWallet();
   const location = useLocation();
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false);
-  const [connecting, setConnecting] = useState<string | null>(null);
-
-  const pick = (name: string) => {
-    setConnecting(name);
-    setTimeout(() => {
-      setAddr("0x8F3a91C2d4E6b7081A2c3D4e5F60718293A4b5c6");
-      setConnecting(null);
-      setOpen(false);
-      toast(`${name} · ${t("connected")}`);
-    }, 900);
-  };
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -93,11 +179,18 @@ export default function Header() {
             </div>
 
             {addr ? (
-              <button onClick={() => setAddr(null)} className="group flex items-center gap-2 rounded-xl border border-mint/40 bg-mint/10 px-3 py-2 font-mono2 text-xs font-semibold text-mint transition hover:border-rosey/50 hover:bg-rosey/10 hover:text-rosey">
-                <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-mint" />
-                {short(addr)}
-                <span className="hidden text-[10px] opacity-0 transition group-hover:opacity-70 sm:inline">{t("disconnect")}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {!isBsc && (
+                  <span className="chip !border-rosey/50 !text-rosey !text-[10px] !px-2" title="Wrong network">
+                    <Icon name="info" size={11} /> {lang === "zh" ? "非 BSC 链" : "Wrong chain"}
+                  </span>
+                )}
+                <button onClick={disconnect} className="group flex items-center gap-2 rounded-xl border border-mint/40 bg-mint/10 px-3 py-2 font-mono2 text-xs font-semibold text-mint transition hover:border-rosey/50 hover:bg-rosey/10 hover:text-rosey">
+                  <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-mint" />
+                  {short(addr)}
+                  <span className="hidden text-[10px] opacity-0 transition group-hover:opacity-70 sm:inline">{t("disconnect")}</span>
+                </button>
+              </div>
             ) : (
               <button onClick={() => setOpen(true)} className="btn-gold flex items-center gap-2 px-4 py-2 text-[13px]">
                 <Icon name="wallet" size={15} />
@@ -147,27 +240,44 @@ export default function Header() {
               </div>
             </div>
             <div className="mt-6 space-y-2.5">
-              {[
-                { n: "MetaMask", c: "#F6851B", icon: "M12 3 4 7l1.5 11L12 21l6.5-3L20 7l-8-4z" },
-                { n: "WalletConnect", c: "#3B99FC", icon: "M5 10c4-4 10-4 14 0M8 13c2.3-2.3 5.7-2.3 8 0m-6.5 3c1.4-1.4 3.6-1.4 5 0M12 19l.01-.01" },
-                { n: "OKX Wallet", c: "#E9EEFF", icon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" },
-              ].map((w) => (
-                <button key={w.n} onClick={() => pick(w.n)} disabled={!!connecting}
-                  className="group flex w-full items-center justify-between rounded-xl border border-line bg-panel2 px-4 py-3.5 transition hover:border-gold/50 hover:bg-raise disabled:opacity-60">
-                  <span className="flex items-center gap-3">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={w.c} strokeWidth="1.7" strokeLinejoin="round"><path d={w.icon} /></svg>
-                    <span className="text-sm font-semibold text-snow">{w.n}</span>
-                  </span>
-                  {connecting === w.n ? (
-                    <span className="flex items-center gap-2 text-xs text-gold2">
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gold/30 border-t-gold" />
-                      BSC…
+              {wallets.length > 0 ? (
+                wallets.map((w) => (
+                  <button key={w.id} onClick={() => void connect(w)} disabled={!!connecting}
+                    className="group flex w-full items-center justify-between rounded-xl border border-line bg-panel2 px-4 py-3.5 transition hover:border-gold/50 hover:bg-raise disabled:opacity-60">
+                    <span className="flex items-center gap-3">
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={WALLET_ICON[w.id]?.c ?? "#f0b90b"} strokeWidth="1.7" strokeLinejoin="round"><path d={WALLET_ICON[w.id]?.icon ?? WALLET_ICON.browser.icon} /></svg>
+                      <span className="text-sm font-semibold text-snow">{w.name}</span>
                     </span>
-                  ) : (
-                    <Icon name="chevR" size={15} className="text-fog transition group-hover:translate-x-0.5 group-hover:text-gold" />
-                  )}
-                </button>
-              ))}
+                    {connecting === w.name ? (
+                      <span className="flex items-center gap-2 text-xs text-gold2">
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gold/30 border-t-gold" />
+                        BSC…
+                      </span>
+                    ) : (
+                      <Icon name="chevR" size={15} className="text-fog transition group-hover:translate-x-0.5 group-hover:text-gold" />
+                    )}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <p className="rounded-xl border border-gold/30 bg-gold/6 px-4 py-3 text-center text-[12.5px] text-gold2">{t("wallet_not_detected")}</p>
+                  {[
+                    { n: "MetaMask", href: "https://metamask.io/download/", c: "#F6851B", icon: WALLET_ICON.metamask.icon },
+                    { n: "OKX Wallet", href: "https://www.okx.com/web3", c: "#E9EEFF", icon: WALLET_ICON.okx.icon },
+                    { n: "Trust Wallet", href: "https://trustwallet.com/download", c: "#3375BB", icon: WALLET_ICON.trust.icon },
+                  ].map((w) => (
+                    <a key={w.n} href={w.href} target="_blank" rel="noreferrer"
+                      className="group flex w-full items-center justify-between rounded-xl border border-line bg-panel2 px-4 py-3.5 transition hover:border-gold/50 hover:bg-raise">
+                      <span className="flex items-center gap-3">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={w.c} strokeWidth="1.7" strokeLinejoin="round"><path d={w.icon} /></svg>
+                        <span className="text-sm font-semibold text-snow">{w.n}</span>
+                        <span className="text-[10.5px] text-fog">{t("wallet_install")}</span>
+                      </span>
+                      <Icon name="external" size={15} className="text-fog transition group-hover:text-gold" />
+                    </a>
+                  ))}
+                </>
+              )}
             </div>
             <p className="mt-5 text-center font-mono2 text-[11px] text-fog/70">BSC Mainnet · ChainID 56</p>
           </div>

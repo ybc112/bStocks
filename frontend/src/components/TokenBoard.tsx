@@ -1,8 +1,11 @@
-import { useMemo, useState } from "react";
-import { TOKENS, fmtBnb, fmtNum } from "../data";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fmtBnb, fmtNum } from "../data";
 import type { Cat, Token } from "../data";
 import { Bar, CoinIcon, Icon, Reveal, SectionHead, Spark, useI18n } from "./ui";
 import TokenDetail from "./TokenDetail";
+import { Contract } from "ethers";
+import { loadProjects, resolveFactoryAddress, FACTORY_ABI } from "../contracts";
+import { readOnlyProvider } from "../web3";
 
 const TABS: { k: Cat; icon: string }[] = [
   { k: "new", icon: "sparkle" },
@@ -16,8 +19,51 @@ const MODE_COLOR: Record<string, string> = { public: "#38e1ff", wl: "#9b6bff", t
 export default function TokenBoard() {
   const { lang, t } = useI18n();
   const [tab, setTab] = useState<Cat>("hot");
-  const [tokens, setTokens] = useState<Token[]>(TOKENS);
+  const [tokens, setTokens] = useState<Token[]>([]);
   const [sel, setSel] = useState<Token | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [noFactory, setNoFactory] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+  const [refreshAt, setRefreshAt] = useState(0);
+  const factoryRef = useRef("");
+  const timerRef = useRef<number | null>(null);
+
+  const refresh = useCallback(async () => {
+    const fa = factoryRef.current || (await resolveFactoryAddress());
+    factoryRef.current = fa;
+    if (!fa) { setNoFactory(true); setLoading(false); return; }
+    const r = await loadProjects(fa);
+    setTokens(r.tokens);
+    setLoadErr(r.error || "");
+    setLoading(false);
+    setRefreshAt(Date.now());
+  }, []);
+
+  /* initial load + 30s polling */
+  useEffect(() => {
+    void refresh();
+    timerRef.current = window.setInterval(() => void refresh(), 30000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [refresh]);
+
+  /* live event listeners: ProjectLaunched / ProjectLaunched2 */
+  useEffect(() => {
+    let fac: Contract | null = null;
+    let dead = false;
+    void (async () => {
+      const fa = factoryRef.current || (await resolveFactoryAddress());
+      factoryRef.current = fa;
+      if (!fa) return;
+      fac = new Contract(fa, FACTORY_ABI, readOnlyProvider());
+      const bump = () => { if (!dead) void refresh(); };
+      fac.on("ProjectLaunched", bump);
+      fac.on("ProjectLaunched2", bump);
+    })();
+    return () => {
+      dead = true;
+      if (fac) { fac.removeAllListeners("ProjectLaunched"); fac.removeAllListeners("ProjectLaunched2"); }
+    };
+  }, [refresh]);
 
   const list = useMemo(() => {
     const f = tokens.filter((x) => x.cat === tab);
@@ -33,13 +79,24 @@ export default function TokenBoard() {
   }, [tokens]);
 
   const onMint = (id: number, amt: number) => {
-    setTokens((ts) => ts.map((x) => (x.id === id ? { ...x, raised: Math.min(x.goal, +(x.raised + amt).toFixed(2)), holders: x.holders + 1 } : x)));
-    setSel((s) => (s && s.id === id ? { ...s, raised: Math.min(s.goal, +(s.raised + amt).toFixed(2)), holders: s.holders + 1 } : s));
+    setTokens((ts) => ts.map((x) => (x.id === id ? { ...x, raised: Math.min(x.goal, x.raised + amt) } : x)));
+    setSel((s) => (s && s.id === id ? { ...s, raised: Math.min(s.goal, s.raised + amt) } : s));
+    window.setTimeout(() => void refresh(), 4000);
   };
+
+  const volUnit = (tk: Token) => (tk.mcapSym ? ` ${tk.mcapSym}` : "");
 
   return (
     <section id="board" className="relative mx-auto max-w-7xl scroll-mt-20 px-4 py-20 sm:px-6">
       <SectionHead kicker="Token Board" title={t("board_title")} sub={t("board_sub")} />
+
+      <div className="mb-4 flex items-center gap-2 font-mono2 text-[10.5px] text-fog/70">
+        <span className={`pulse-dot h-1.5 w-1.5 rounded-full ${loadErr ? "bg-rosey" : loading ? "bg-gold" : "bg-mint"}`} />
+        {loadErr ? `RPC error: ${loadErr.slice(0, 60)}` : noFactory ? t("board_no_factory") : `${t("board_chain")} · ${refreshAt ? new Date(refreshAt).toTimeString().slice(0, 8) : "…"}`}
+        <button onClick={() => { setLoading(true); void refresh(); }} className="ml-1 rounded border border-line px-1.5 py-0.5 transition hover:border-gold/50 hover:text-gold2" title="refresh">
+          <Icon name="refresh" size={10} className="inline" />
+        </button>
+      </div>
 
       <Reveal delay={80}>
         <div className="mb-8 flex flex-wrap items-center gap-2 border-b border-line pb-px">
@@ -62,6 +119,19 @@ export default function TokenBoard() {
         </div>
       </Reveal>
 
+      {loading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-[300px] animate-pulse rounded-2xl border border-line bg-panel/50" />
+          ))}
+        </div>
+      ) : list.length === 0 ? (
+        <div className="rounded-2xl border border-line bg-panel/60 px-6 py-16 text-center">
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-gold/30 bg-gold/8 text-gold"><Icon name="sparkle" size={24} /></span>
+          <p className="mt-4 text-sm font-bold text-snow">{noFactory ? t("board_no_factory") : t("board_empty")}</p>
+          <p className="mt-1.5 text-xs text-fog">{noFactory ? "VITE_FACTORY_ADDRESS / backend /api/config" : t("board_empty_sub")}</p>
+        </div>
+      ) : (
       <div key={tab} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {list.map((tk, i) => {
           const pct = (tk.raised / tk.goal) * 100;
@@ -90,7 +160,7 @@ export default function TokenBoard() {
                 </div>
 
                 <div className="mt-3 -mx-1 opacity-90 transition group-hover:opacity-100">
-                  <Spark data={tk.spark} color={tk.chg >= 0 ? "#2ee6a8" : "#ff5c7a"} w={252} h={40} />
+                  <Spark data={tk.spark.length ? tk.spark : [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]} color={tk.chg >= 0 ? "#2ee6a8" : "#ff5c7a"} w={252} h={40} />
                 </div>
 
                 <div className="mt-3.5">
@@ -106,9 +176,9 @@ export default function TokenBoard() {
                 </div>
 
                 <div className="mt-3 grid grid-cols-3 gap-2 border-t border-line pt-3 text-center">
-                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">${fmtNum(tk.mcap)}</div><div className="text-[10px] text-fog">{t("card_mcap")}</div></div>
-                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">${fmtNum(tk.vol)}</div><div className="text-[10px] text-fog">{t("card_vol")}</div></div>
-                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">{fmtNum(tk.holders)}</div><div className="text-[10px] text-fog">{t("card_holders")}</div></div>
+                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">{tk.mcap > 0 ? `${fmtNum(tk.mcap)}${volUnit(tk)}` : "—"}</div><div className="text-[10px] text-fog">{t("card_mcap")}</div></div>
+                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">{fmtNum(tk.vol)}{volUnit(tk)}</div><div className="text-[10px] text-fog">{t("card_vol")}</div></div>
+                  <div><div className="font-mono2 text-[12.5px] font-bold text-snow">{tk.holders > 0 ? fmtNum(tk.holders) : "—"}</div><div className="text-[10px] text-fog">{t("card_holders")}</div></div>
                 </div>
 
                 <div className="mt-3 flex items-center justify-between">
@@ -128,6 +198,7 @@ export default function TokenBoard() {
           );
         })}
       </div>
+      )}
 
       {sel && <TokenDetail token={sel} onClose={() => setSel(null)} onMint={onMint} />}
     </section>

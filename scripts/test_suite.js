@@ -224,6 +224,40 @@ async function main() {
     late ? ok("限时 Mint：窗口外拒绝") : bad("限时", "未拦截");
   }
 
+  // ---------- 确定性发射（CREATE2 + commit-reveal） ----------
+  {
+    const depAddr = await fac.deployer();
+    const dep = await ethers.getContractAt("TokenDeployer", depAddr);
+    const salt = ethers.id("vanity-7777");
+    const base = ethers.ZeroAddress;
+    const predicted = await fac.predictTokenAddress("Det", "DET", dev.address, mkt.address, base, salt);
+    const commitment = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address", "bytes32", "string", "string", "address"],
+        [userA.address, salt, "Det", "DET", await fac.WBNB()]
+      )
+    );
+    const wrongUser = await expectRevert(
+      fac.launchProjectDeterministic("Det", "DET", dev.address, mkt.address, base, salt, userB.address)
+    );
+    await (await dep.connect(userA).commitSalt(commitment)).wait();
+    const noCommit = await expectRevert(
+      fac.launchProjectDeterministic("DetX", "DET", dev.address, mkt.address, base, salt, userA.address)
+    );
+    const tx = await (await fac.launchProjectDeterministic("Det", "DET", dev.address, mkt.address, base, salt, userA.address)).wait();
+    const ev2 = tx.logs.find((l) => l.fragment && l.fragment.name === "ProjectLaunched2");
+    const det = await ethers.getContractAt("StocksToken", ev2.args.token);
+    const ownerOk = (await det.owner()) === (await fac.getAddress());
+    const lpOk = (await det.launchpad()) === (await fac.getAddress());
+    const cfgOk = await (await fac.configMint(ev2.args.token, false, RATE, 1000, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+    const replay = await expectRevert(
+      fac.launchProjectDeterministic("Det", "DET", dev.address, mkt.address, base, salt, userA.address)
+    );
+    wrongUser && noCommit && replay && ev2.args.token === predicted && ownerOk && lpOk && !!cfgOk
+      ? ok("确定性发射：commit-reveal + 预测地址 + 工厂接管 + 配置生效")
+      : bad("确定性发射", `owner=${ownerOk} lp=${lpOk} addr=${ev2.args.token === predicted}`);
+  }
+
   // ---------- handover 自管 ----------
   {
     const t6 = await launch(s, 0);
