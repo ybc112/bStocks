@@ -1,0 +1,243 @@
+/**
+ * bStocks Launchpad Backend Server
+ * 
+ * Provides:
+ * 1. Vanity address salt search (offline worker)
+ * 2. BSCScan contract verification after deployment
+ * 3. Deployment metadata storage
+ * 
+ * Environment variables:
+ *   PORT=3001
+ *   BSCSCAN_API_KEY=YourBscScanApiKey
+ *   RPC_URL=https://bsc-dataseed.binance.org/
+ *   FACTORY_ADDRESS=0x...
+ *   DEPLOYER_ADDRESS=0x...
+ */
+
+import express from "express";
+import cors from "cors";
+import { ethers } from "ethers";
+import { createRequire } from "module";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const PORT = process.env.PORT || 3001;
+const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || "";
+const RPC_URL = process.env.RPC_URL || "https://bsc-dataseed.binance.org/";
+const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
+const DEPLOYER_ADDRESS = process.env.DEPLOYER_ADDRESS || "";
+
+// In-memory deployment store (use DB in production)
+const deployments = [];
+
+// Load contract artifact for init code hash
+let initCodeHash = null;
+try {
+  const artifact = require("../../artifacts/contracts/StocksToken.sol/StocksToken.json");
+  if (artifact && artifact.bytecode) {
+    initCodeHash = ethers.keccak256(ethers.getBytes(artifact.bytecode));
+    console.error(`[server] Init code hash loaded: ${initCodeHash}`);
+  }
+} catch (e) {
+  console.error("[server] Warning: Cannot load StocksToken artifact. Run 'npx hardhat compile' first.");
+}
+
+// ========== API Routes ==========
+
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: Date.now() });
+});
+
+// Get deployment config
+app.get("/api/config", (req, res) => {
+  res.json({
+    factoryAddress: FACTORY_ADDRESS,
+    deployerAddress: DEPLOYER_ADDRESS,
+    chainId: 56,
+    chainName: "BNB Smart Chain",
+  });
+});
+
+// ========== Vanity Address ==========
+
+// Search for a vanity salt
+app.post("/api/vanity/search", async (req, res) => {
+  const { suffix, deployer, maxAttempts = 50000 } = req.body;
+
+  if (!suffix || !/^[0-9a-fA-F]{4,8}$/.test(suffix)) {
+    return res.status(400).json({ error: "Invalid suffix. Must be 4-8 hex characters (e.g., 7777)" });
+  }
+
+  if (!initCodeHash) {
+    return res.status(500).json({ error: "Contract artifact not loaded" });
+  }
+
+  const deployerAddr = deployer || DEPLOYER_ADDRESS;
+  if (!deployerAddr || !ethers.isAddress(deployerAddr)) {
+    return res.status(400).json({ error: "Invalid deployer address" });
+  }
+
+  const suffixLower = suffix.toLowerCase();
+  const startTime = Date.now();
+  let found = false;
+
+  // Search in batches, return progress
+  for (let i = 0; i < maxAttempts; i += 1000) {
+    const batchSize = Math.min(1000, maxAttempts - i);
+    for (let j = 0; j < batchSize; j++) {
+      const nonce = i + j;
+      const salt = ethers.zeroPadValue(ethers.toBeHex(nonce), 32);
+      const addr = ethers.getAddress(
+        "0x" + ethers.keccak256(
+          ethers.solidityPacked(
+            ["bytes1", "address", "bytes32", "bytes32"],
+            ["0xff", deployerAddr, salt, initCodeHash]
+          )
+        ).slice(26)
+      );
+
+      if (addr.toLowerCase().endsWith(suffixLower)) {
+        found = true;
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+        return res.json({
+          found: true,
+          salt: ethers.hexlify(salt),
+          address: addr,
+          deployer: deployerAddr,
+          attempts: nonce + 1,
+          elapsed: `${elapsed}s`,
+        });
+      }
+    }
+
+    // Send progress every 10k attempts
+    if ((i + batchSize) % 10000 === 0) {
+      console.error(`[vanity] Progress: ${i + batchSize}/${maxAttempts}`);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+  res.json({
+    found: false,
+    attempts: maxAttempts,
+    elapsed: `${elapsed}s`,
+    message: `No address ending with "${suffix}" found in ${maxAttempts} attempts`,
+  });
+});
+
+// ========== BSCScan Verification ==========
+
+// Submit verification
+app.post("/api/verify/submit", async (req, res) => {
+  const { tokenAddress, name, symbol, router, factory, dev, marketing, baseToken } = req.body;
+
+  if (!tokenAddress || !name || !symbol) {
+    return res.status(400).json({ error: "Missing required fields: tokenAddress, name, symbol" });
+  }
+
+  if (!BSCSCAN_API_KEY) {
+    return res.status(500).json({ error: "BSCSCAN_API_KEY not configured on server" });
+  }
+
+  try {
+    // Encode constructor arguments
+    const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+    const constructorArgs = abiCoder.encode(
+      ["string", "string", "address", "address", "address", "address", "address"],
+      [name, symbol, router, factory, dev, marketing, baseToken]
+    ).slice(2);
+
+    // Submit to BSCScan
+    const params = new URLSearchParams({
+      apikey: BSCSCAN_API_KEY,
+      module: "contract",
+      action: "verifysourcecode",
+      contractaddress: tokenAddress,
+      sourceCode: "", // Standard JSON Input - need to load from artifact
+      codeformat: "solidity-standard-json-input",
+      contractname: "contracts/StocksToken.sol:StocksToken",
+      compilerversion: "v0.8.20+commit.a1b79de6",
+      optimizationUsed: 1,
+      runs: 200,
+      constructorArguements: constructorArgs,
+      evmversion: "paris",
+      viaIR: true,
+      licenseType: 3, // MIT
+    });
+
+    const response = await fetch("https://api.bscscan.com/api", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+
+    const data = await response.json();
+
+    // Store deployment
+    const deployment = {
+      tokenAddress,
+      name,
+      symbol,
+      timestamp: Date.now(),
+      verificationStatus: data.status === "1" ? "submitted" : "failed",
+      verificationGuid: data.result || null,
+      verificationError: data.status !== "1" ? data.result : null,
+    };
+    deployments.push(deployment);
+
+    res.json(deployment);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check verification status
+app.get("/api/verify/status/:guid", async (req, res) => {
+  const { guid } = req.params;
+
+  if (!BSCSCAN_API_KEY) {
+    return res.status(500).json({ error: "BSCSCAN_API_KEY not configured" });
+  }
+
+  try {
+    const params = new URLSearchParams({
+      apikey: BSCSCAN_API_KEY,
+      module: "contract",
+      action: "checkverifystatus",
+      guid: guid,
+    });
+
+    const response = await fetch(`https://api.bscscan.com/api?${params.toString()}`);
+    const data = await response.json();
+
+    res.json({
+      guid,
+      status: data.status === "1" ? "verified" : "pending",
+      result: data.result,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get deployment history
+app.get("/api/deployments", (req, res) => {
+  res.json({ deployments: deployments.slice(-50).reverse() });
+});
+
+// ========== Start Server ==========
+
+app.listen(PORT, () => {
+  console.error(`[server] bStocks Launchpad Backend running on port ${PORT}`);
+  console.error(`[server] Vanity search ${initCodeHash ? "ready" : "unavailable (no artifact)"}`);
+  console.error(`[server] BSCScan verification ${BSCSCAN_API_KEY ? "ready" : "unavailable (no API key)"}`);
+});
