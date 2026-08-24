@@ -20,14 +20,16 @@ declare global {
 }
 
 /* ---------------- BSC chain config ---------------- */
-export const BSC_CHAIN_ID = 56;
-export const BSC_CHAIN_ID_HEX = "0x38";
-export const BSC_RPC = "https://bsc-dataseed.binance.org/";
-export const BSC_EXPLORER = "https://bscscan.com";
+export const BSC_CHAIN_ID = Number((import.meta.env.VITE_CHAIN_ID as string) || 56);
+export const BSC_CHAIN_ID_HEX = "0x" + BSC_CHAIN_ID.toString(16);
+export const BSC_RPC =
+  (import.meta.env.VITE_RPC_URL as string) ||
+  (BSC_CHAIN_ID === 97 ? "https://bsc-testnet.publicnode.com" : "https://bsc-dataseed.binance.org/");
+export const BSC_EXPLORER = BSC_CHAIN_ID === 97 ? "https://testnet.bscscan.com" : "https://bscscan.com";
 
 const BSC_CHAIN_PARAMS = {
   chainId: BSC_CHAIN_ID_HEX,
-  chainName: "BNB Smart Chain",
+  chainName: BSC_CHAIN_ID === 97 ? "BNB Smart Chain Testnet" : "BNB Smart Chain",
   nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
   rpcUrls: [BSC_RPC],
   blockExplorerUrls: [BSC_EXPLORER],

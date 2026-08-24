@@ -168,9 +168,10 @@ export default function CreateWizard() {
       const marketing = w.mktOn && isAddress(w.mktWallet) ? w.mktWallet : w.dev;
 
       let salt: string;
+      let vanityAddr = "";
       setStage("vanity", { state: "run" });
       if (w.vanityOn) {
-        const v = await vanitySearch(w.vanitySuffix, deployerAddr, 200000);
+        const v = await vanitySearch(w.vanitySuffix, deployerAddr, [w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase], 200000);
         if (!v.found || !v.salt) {
           setStage("vanity", { state: "err", info: v.message || "not found" });
           setErrMsg(t("err_vanity"));
@@ -178,7 +179,8 @@ export default function CreateWizard() {
           return;
         }
         salt = v.salt;
-        setStage("vanity", { state: "ok", info: `${v.address} · ${v.attempts} ${lang === "zh" ? "tries" : "tries"} · ${v.elapsed}` });
+        vanityAddr = v.address || "";
+        setStage("vanity", { state: "ok", info: `${v.address} · ${v.attempts} tries · ${v.elapsed}` });
       } else {
         salt = hexlify(randomBytes(32));
         setStage("vanity", { state: "ok", info: lang === "zh" ? "random salt" : "random salt" });
@@ -186,6 +188,9 @@ export default function CreateWizard() {
 
       setStage("commit", { state: "run" });
       const predicted = (await factory.predictTokenAddress(w.name, w.sym, w.dev, marketing, base, salt)) as string;
+      if (vanityAddr && predicted.toLowerCase() !== vanityAddr.toLowerCase()) {
+        toast(t("err_vanity"), "warn");
+      }
       const commitment = computeCommitment(addr!, salt, w.name, w.sym, resolvedBase);
       const deployer = new Contract(deployerAddr, DEPLOYER_ABI, signer);
       txs.push(await waitTx("commitSalt", deployer.commitSalt(commitment)));

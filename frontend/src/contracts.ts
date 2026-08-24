@@ -111,11 +111,11 @@ export function computeCommitment(user: string, salt: string, name: string, symb
 /* ---------------- backend API ---------------- */
 export type VanityResult = { found: boolean; salt?: string; address?: string; attempts?: number; elapsed?: string; message?: string };
 
-export async function vanitySearch(suffix: string, deployer: string, maxAttempts = 200000): Promise<VanityResult> {
+export async function vanitySearch(suffix: string, deployer: string, constructorArgs?: string[], maxAttempts = 200000): Promise<VanityResult> {
   const r = await fetch(`${API_BASE}/api/vanity/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ suffix, deployer, maxAttempts }),
+    body: JSON.stringify({ suffix, deployer, maxAttempts, constructorArgs }),
   });
   if (!r.ok) throw new Error(`vanity api ${r.status}`);
   return (await r.json()) as VanityResult;

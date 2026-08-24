@@ -40,14 +40,28 @@ const deployments = [];
 
 // Load contract artifact for init code hash
 let initCodeHash = null;
+let stockArtifact = null;
 try {
-  const artifact = require("../../artifacts/contracts/StocksToken.sol/StocksToken.json");
+  const artifact = require("../artifacts/contracts/StocksToken.sol/StocksToken.json");
   if (artifact && artifact.bytecode) {
+    stockArtifact = artifact;
     initCodeHash = ethers.keccak256(ethers.getBytes(artifact.bytecode));
     console.error(`[server] Init code hash loaded: ${initCodeHash}`);
   }
 } catch (e) {
   console.error("[server] Warning: Cannot load StocksToken artifact. Run 'npx hardhat compile' first.");
+}
+
+// CREATE2 init code hash INCLUDING the encoded constructor arguments.
+// Without the args the predicted address does NOT match the deployed one.
+// Args order: (name, symbol, router, pancakeFactory, dev, marketing, baseToken)
+function initCodeHashWithArgs(constructorArgs) {
+  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+  const initCode = stockArtifact.bytecode + abiCoder.encode(
+    ["string", "string", "address", "address", "address", "address", "address"],
+    constructorArgs
+  ).slice(2);
+  return ethers.keccak256(ethers.getBytes(initCode));
 }
 
 // ========== API Routes ==========
@@ -71,7 +85,7 @@ app.get("/api/config", (req, res) => {
 
 // Search for a vanity salt
 app.post("/api/vanity/search", async (req, res) => {
-  const { suffix, deployer, maxAttempts = 50000 } = req.body;
+  const { suffix, deployer, maxAttempts = 50000, constructorArgs } = req.body;
 
   if (!suffix || !/^[0-9a-fA-F]{4,8}$/.test(suffix)) {
     return res.status(400).json({ error: "Invalid suffix. Must be 4-8 hex characters (e.g., 7777)" });
@@ -84,6 +98,23 @@ app.post("/api/vanity/search", async (req, res) => {
   const deployerAddr = deployer || DEPLOYER_ADDRESS;
   if (!deployerAddr || !ethers.isAddress(deployerAddr)) {
     return res.status(400).json({ error: "Invalid deployer address" });
+  }
+
+  let codeHash = initCodeHash;
+  if (Array.isArray(constructorArgs) && constructorArgs.length === 7) {
+    if (!stockArtifact) {
+      return res.status(500).json({ error: "Contract artifact not loaded" });
+    }
+    for (const a of constructorArgs) {
+      if (typeof a !== "string") {
+        return res.status(400).json({ error: "constructorArgs must be 7 strings" });
+      }
+    }
+    try {
+      codeHash = initCodeHashWithArgs(constructorArgs);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid constructorArgs: " + e.message });
+    }
   }
 
   const suffixLower = suffix.toLowerCase();
@@ -100,7 +131,7 @@ app.post("/api/vanity/search", async (req, res) => {
         "0x" + ethers.keccak256(
           ethers.solidityPacked(
             ["bytes1", "address", "bytes32", "bytes32"],
-            ["0xff", deployerAddr, salt, initCodeHash]
+            ["0xff", deployerAddr, salt, codeHash]
           )
         ).slice(26)
       );

@@ -1,4 +1,6 @@
 require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-verify");
+require("dotenv").config();
 
 module.exports = {
   solidity: {
@@ -12,19 +14,19 @@ module.exports = {
     }
   },
   networks: {
+    hardhat: {},
     bscTestnet: {
-      url: "https://data-seed-prebsc-1-s1.binance.org:8545",
-      chainId: 97
+      url: process.env.TESTNET_RPC_URL || "https://bsc-testnet.publicnode.com",
+      chainId: 97,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
     },
     bsc: {
-      url: "https://bsc-dataseed.binance.org",
-      chainId: 56
+      url: process.env.RPC_URL || "https://bsc-dataseed.binance.org",
+      chainId: 56,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
     }
   },
   etherscan: {
-    apiKey: {
-      bscTestnet: process.env.BSCSCAN_TESTNET_API_KEY || "",
-      bsc: process.env.BSCSCAN_API_KEY || ""
-    }
+    apiKey: process.env.BSCSCAN_API_KEY || ""
   }
 };
