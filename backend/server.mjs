@@ -8,13 +8,22 @@
  * 
  * Environment variables:
  *   PORT=3001
- *   BSCSCAN_API_KEY=YourBscScanApiKey
+ *   CHAIN_ID=97 (BSC testnet) or 56 (BSC mainnet)
+ *   BSCSCAN_API_KEY=YourEtherscanV2ApiKey
  *   RPC_URL=https://bsc-dataseed.binance.org/
  *   FACTORY_ADDRESS=0x...
  *   DEPLOYER_ADDRESS=0x...
  */
 
+import "dotenv/config";
 import express from "express";
+import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
+
+// Honor HTTP(S)_PROXY env vars for outbound fetch (direct connection when unset)
+if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+  console.error("[server] Outbound fetch via proxy from env");
+}
 import cors from "cors";
 import { ethers } from "ethers";
 import { createRequire } from "module";
@@ -30,6 +39,8 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+const CHAIN_ID = Number(process.env.CHAIN_ID || 97);
+const ETHERSCAN_API = "https://api.etherscan.io/v2/api";
 const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || "";
 const RPC_URL = process.env.RPC_URL || "https://bsc-dataseed.binance.org/";
 const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
@@ -64,6 +75,25 @@ function initCodeHashWithArgs(constructorArgs) {
   return ethers.keccak256(ethers.getBytes(initCode));
 }
 
+// Standard JSON input from hardhat build-info (for Etherscan verification)
+let standardJsonInput = null;
+let compilerVersion = "";
+try {
+  const buildInfoDir = path.join(__dirname, "..", "artifacts", "build-info");
+  const files = fs.readdirSync(buildInfoDir).filter((f) => f.endsWith(".json")).sort().reverse();
+  for (const f of files) {
+    const data = JSON.parse(fs.readFileSync(path.join(buildInfoDir, f), "utf8"));
+    if (data?.output?.contracts?.["contracts/StocksToken.sol"]?.StocksToken) {
+      standardJsonInput = JSON.stringify(data.input);
+      if (data.solcLongVersion) compilerVersion = "v" + data.solcLongVersion;
+      break;
+    }
+  }
+  console.error(`[server] Standard JSON input ${standardJsonInput ? "ready" : "unavailable"} · compiler ${compilerVersion}`);
+} catch (e) {
+  console.error("[server] Warning: Cannot load build-info. Run 'npx hardhat compile' first.");
+}
+
 // ========== API Routes ==========
 
 // Health check
@@ -76,8 +106,8 @@ app.get("/api/config", (req, res) => {
   res.json({
     factoryAddress: FACTORY_ADDRESS,
     deployerAddress: DEPLOYER_ADDRESS,
-    chainId: 56,
-    chainName: "BNB Smart Chain",
+    chainId: CHAIN_ID,
+    chainName: CHAIN_ID === 97 ? "BNB Smart Chain Testnet" : "BNB Smart Chain",
   });
 });
 
@@ -187,27 +217,28 @@ app.post("/api/verify/submit", async (req, res) => {
       [name, symbol, router, factory, dev, marketing, baseToken]
     ).slice(2);
 
-    // Submit to BSCScan
+    if (!standardJsonInput || !compilerVersion) {
+      return res.status(500).json({ error: "Standard JSON input not loaded on server (run 'npx hardhat compile')" });
+    }
+
+    // Submit to Etherscan V2
     const params = new URLSearchParams({
+      chainid: String(CHAIN_ID),
       apikey: BSCSCAN_API_KEY,
       module: "contract",
       action: "verifysourcecode",
       contractaddress: tokenAddress,
-      sourceCode: "", // Standard JSON Input - need to load from artifact
+      sourceCode: standardJsonInput,
       codeformat: "solidity-standard-json-input",
       contractname: "contracts/StocksToken.sol:StocksToken",
-      compilerversion: "v0.8.20+commit.a1b79de6",
-      optimizationUsed: 1,
-      runs: 200,
+      compilerversion: compilerVersion,
       constructorArguements: constructorArgs,
-      evmversion: "paris",
-      viaIR: true,
       licenseType: 3, // MIT
     });
 
-    const response = await fetch("https://api.bscscan.com/api", {
+    const response = await fetch(ETHERSCAN_API, {
       method: "POST",
-      headers: { "Content-Type": "application/x-application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
     });
 
@@ -241,13 +272,14 @@ app.get("/api/verify/status/:guid", async (req, res) => {
 
   try {
     const params = new URLSearchParams({
+      chainid: String(CHAIN_ID),
       apikey: BSCSCAN_API_KEY,
       module: "contract",
       action: "checkverifystatus",
       guid: guid,
     });
 
-    const response = await fetch(`https://api.bscscan.com/api?${params.toString()}`);
+    const response = await fetch(`${ETHERSCAN_API}?${params.toString()}`);
     const data = await response.json();
 
     res.json({
