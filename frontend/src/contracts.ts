@@ -171,15 +171,25 @@ export function avatarUrl(tokenAddress: string): string {
 const MC3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const mcIface = new Interface(["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns (bool[] success, bytes[] returnData)"]);
 
+// Multicall3 response decoding has proven unreliable against the testnet RPC
+// under ethers v6 (both decodeFunctionResult and AbiCoder overflow on the nested
+// dynamic bytes[]). Fall back to sequential eth_call per entry — correct and
+// dependency-free, at a small cost in round trips; the project list is small.
 async function aggregate(provider: JsonRpcProvider, calls: { target: string; data: string }[]): Promise<string[]> {
-  const out: string[] = [];
-  const CHUNK = 150;
-  for (let i = 0; i < calls.length; i += CHUNK) {
-    const chunk = calls.slice(i, i + CHUNK);
-    const data = mcIface.encodeFunctionData("aggregate3", [chunk.map((c) => [c.target, true, c.data])]);
-    const res = await provider.call({ to: MC3, data });
-    const [success, ret] = mcIface.decodeFunctionResult("aggregate3", res);
-    chunk.forEach((_, j) => out.push(success[j] ? ret[j] : "0x"));
+  const out: string[] = new Array(calls.length).fill("0x");
+  const n = calls.length;
+  for (let i = 0; i < n; i += 25) {
+    const batch = await Promise.all(
+      calls.slice(i, i + 25).map(async (c, j) => {
+        try {
+          const r = await provider.call({ to: c.target, data: c.data });
+          return { idx: i + j, ok: true, data: r };
+        } catch {
+          return { idx: i + j, ok: false, data: "0x" };
+        }
+      })
+    );
+    for (const b of batch) out[b.idx] = b.data || "0x";
   }
   return out;
 }
