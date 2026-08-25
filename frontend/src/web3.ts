@@ -19,13 +19,11 @@ declare global {
   }
 }
 
-/* ---------------- BSC chain config ---------------- */
-export const BSC_CHAIN_ID = Number((import.meta.env.VITE_CHAIN_ID as string) || 56);
+/* ---------------- BSC chain config (testnet) ---------------- */
+export const BSC_CHAIN_ID = 97;
 export const BSC_CHAIN_ID_HEX = "0x" + BSC_CHAIN_ID.toString(16);
-export const BSC_RPC =
-  (import.meta.env.VITE_RPC_URL as string) ||
-  (BSC_CHAIN_ID === 97 ? "https://bsc-testnet.publicnode.com" : "https://bsc-dataseed.binance.org/");
-export const BSC_EXPLORER = BSC_CHAIN_ID === 97 ? "https://testnet.bscscan.com" : "https://bscscan.com";
+export const BSC_RPC = "https://bsc-testnet.publicnode.com";
+export const BSC_EXPLORER = "https://testnet.bscscan.com";
 
 const BSC_CHAIN_PARAMS = {
   chainId: BSC_CHAIN_ID_HEX,
