@@ -621,12 +621,8 @@ export default function CreateWizard() {
                     {w.vanityOn && (
                       <div className="fade-in mt-3">
                         <div className="flex flex-wrap gap-1.5">
-                          {["bbbb"].map((s) => (
-                            <button key={s} onClick={() => set({ vanitySuffix: s })}
-                              className={`font-mono2 rounded-lg border px-3.5 py-1.5 text-xs font-bold transition ${w.vanitySuffix === s ? "border-gold bg-gold/12 text-gold2" : "border-line text-fog hover:border-gold/40"}`}>…{s}</button>
-                          ))}
-                          <input value={w.vanitySuffix} onChange={(e) => set({ vanitySuffix: e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 8) })}
-                            className="font-mono2 w-24 rounded-lg border border-line bg-abyss/60 px-3 py-1.5 text-xs font-bold text-gold2 focus:border-gold/60 focus:outline-none" placeholder="hex" />
+                          <span className="font-mono2 flex items-center gap-1 rounded-lg border border-gold bg-gold/12 px-3.5 py-1.5 text-xs font-bold text-gold2">…bbbb</span>
+                          <span className="font-mono2 text-[10px] text-fog">– bbbb(固定)</span>
                         </div>
                         <p className="mt-1.5 text-[10.5px] text-fog">{t("wz_vanity_note")} · {t("wz_auto_verify_note")}</p>
                       </div>
