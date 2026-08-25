@@ -5,7 +5,7 @@ import { POOL_ASSETS } from "./data";
 import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
-export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "http://localhost:3001";
+export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.dogau1413.com";
 export const ENV_FACTORY: string = ((import.meta.env.VITE_FACTORY_ADDRESS as string) || "").trim();
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
