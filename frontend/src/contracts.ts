@@ -6,7 +6,7 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0x95e3358f860997E8F365d0b7f7DddE11C7A79819";
+export const ENV_FACTORY: string = "0x216FF5f0C9778Df7b2B2E33395812Ba9B60a625a";
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
