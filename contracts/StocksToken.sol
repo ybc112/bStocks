@@ -83,6 +83,10 @@ contract StocksToken {
         isExcludedFromFees[address(this)] = true;
         isExcludedFromFees[_router] = true;
         isExcludedFromFees[DEAD] = true;
+
+        // Fixed-supply model: mint the entire 10^30 to the contract as the pool.
+        // Users receive their pro-rata share on mint; LP reserve comes from here.
+        _mint(address(this), MAX_SUPPLY);
     }
 
     function transferOwnership(address a) external onlyOwner { pendingOwner = a; }
@@ -196,10 +200,19 @@ contract StocksToken {
 
         if (walletCap > 0) require(mintedBNB[msg.sender] <= walletCap, "WCAP");
 
-        uint256 tokens = use * mintRate;
-        _mint(msg.sender, tokens);
+        // Fixed-supply model: total supply = 10^30 minted at deploy.
+        // LP reserve consumes poolPercent% of supply; the rest is shared
+        // pro-rata to minted BNB. Each user receives their share from the
+        // contract's pre-minted pool (contract is fee-exempt).
+        uint256 lpShare = (MAX_SUPPLY * poolPercent) / TAX_DIVISOR;
+        uint256 mintShare = MAX_SUPPLY - lpShare;
+        uint256 tokens = (mintShare * use) / capBNB;
+        require(balanceOf[address(this)] >= tokens, "LOW"); // pool has enough
+        balanceOf[address(this)] -= tokens;
+        balanceOf[msg.sender] += tokens;
+        emit Transfer(address(this), msg.sender, tokens);
 
-        // Fix 1: Every mint adds liquidity in real-time
+        // Fix 1: Every mint adds liquidity in real-time (LP tokens from pool)
         _addLiquidityLive(use);
 
         // Fix 1: Check graduation after every mint
@@ -214,9 +227,12 @@ contract StocksToken {
     // Fix 2 + Fix 3: Remove try/catch from _addLiquidityLive
     function _addLiquidityLive(uint256 bnbIn) internal {
         uint256 lpBNB = (bnbIn * poolPercent) / TAX_DIVISOR;
-        uint256 tokensForLP = (bnbIn * mintRate * lpTokenRatio) / TAX_DIVISOR;
-        if (lpBNB == 0 || tokensForLP == 0) return;
-        _mint(address(this), tokensForLP);
+        // LP share taken from pre-minted pool (fixed supply), proportional to BNB in
+        uint256 lpShare = (MAX_SUPPLY * poolPercent) / TAX_DIVISOR;
+        uint256 tokensForLP = (lpShare * bnbIn) / capBNB;
+        if (lpBNB == 0 || tokensForLP == 0 || balanceOf[address(this)] < tokensForLP) return;
+        balanceOf[address(this)] -= tokensForLP;
+        emit Transfer(address(this), address(0), 0); // keep Transfer event ABI parity
         allowance[address(this)][address(router)] = type(uint256).max;
         _inSwap = true;
         if (baseToken == WBNB) {
@@ -477,8 +493,8 @@ contract StocksToken {
         if (baseToken == WBNB) {
             uint256 half = bnbIn / 2;
             uint256 tokensForLP = (half * mintRate) / 1 ether;
-            if (tokensForLP > 0) {
-                _mint(address(this), tokensForLP);
+            if (tokensForLP > 0 && balanceOf[address(this)] >= tokensForLP) {
+                balanceOf[address(this)] -= tokensForLP;
                 allowance[address(this)][address(router)] = type(uint256).max;
                 // Fix 3: Will revert on failure
                 (,, uint256 liq) = router.addLiquidityETH{value: half}(address(this), tokensForLP, 0, 0, address(this), block.timestamp + 300);
@@ -495,8 +511,8 @@ contract StocksToken {
             require(baseBal > 0, "SWAP");
             allowanceRouter(baseToken);
             uint256 tokensForLP = (bnbIn * mintRate * lpTokenRatio) / TAX_DIVISOR / 1 ether;
-            if (tokensForLP > 0) {
-                _mint(address(this), tokensForLP);
+            if (tokensForLP > 0 && balanceOf[address(this)] >= tokensForLP) {
+                balanceOf[address(this)] -= tokensForLP;
                 // Fix 3: Will revert on failure
                 (,, uint256 liq) = router.addLiquidity(address(this), baseToken, tokensForLP, baseBal, 0, 0, address(this), block.timestamp + 300);
                 totalLPToken += liq;

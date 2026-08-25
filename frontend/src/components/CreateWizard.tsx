@@ -517,7 +517,7 @@ export default function CreateWizard() {
                 <div className={`rounded-xl border p-4 ${feeOverflow ? "border-rosey/50 bg-rosey/6" : "border-line bg-panel2/60"}`}>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-bold text-snow">{t("wz_allocation")}</div>
-                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{feeTotal} / 800 permille</span>
+                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{feeTotal} / 900 permille</span>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     {([
