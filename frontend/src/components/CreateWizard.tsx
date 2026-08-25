@@ -89,23 +89,11 @@ export default function CreateWizard() {
   });
   const [result, setResult] = useState<{ ca: string; salt: string; txs: string[] }>({ ca: "", salt: "", txs: [] });
   const [errMsg, setErrMsg] = useState("");
-  const [admin, setAdmin] = useState<boolean | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [avatarUploading, setAvatarUploading] = useState(false);
   const set = (patch: Partial<W>) => setW((v) => ({ ...v, ...patch }));
   const setStage = (k: StageKey, s: Stage) => setStages((v) => ({ ...v, [k]: s }));
-
-  useEffect(() => {
-    void (async () => {
-      const fa = await resolveFactoryAddress();
-      if (!fa) { setAdmin(false); return; }
-      try {
-        const owner = (await new Contract(fa, FACTORY_ABI, readOnlyProvider()).owner()) as string;
-        setAdmin(!!addr && owner.toLowerCase() === addr.toLowerCase());
-      } catch { setAdmin(null); }
-    })();
-  }, [addr]);
 
   const optLabel = (o: string) =>
     o === "native" ? t("opt_native") : o === "pool" ? `${t("opt_pool")}(${w.pool})` : o === "custom" ? t("opt_custom") : o;
@@ -114,7 +102,7 @@ export default function CreateWizard() {
   const canNext = step !== 0 || (w.name.trim() && w.sym.trim());
   const poolAsset = assetOf(w.pool);
   const feeTotal = (w.mktOn ? w.feeMkt : 0) + (w.buybackOn ? w.feeBb : 0) + w.feeLiq + w.feeSelf;
-  const feeOverflow = feeTotal > 800;
+  const feeOverflow = feeTotal > 900;
   const wlCount = parseWl(w.wlAddrs).length;
 
   const validate = (): string | null => {
@@ -155,14 +143,6 @@ export default function CreateWizard() {
       const signer = await getSigner();
       if (!signer) { toast(t("need_wallet"), "warn"); setPhase("error"); return; }
       const factory = new Contract(fa, FACTORY_ABI, signer);
-      const owner = (await factory.owner()) as string;
-      if (owner.toLowerCase() !== addr!.toLowerCase()) {
-        toast(t("admin_only"), "warn");
-        setErrMsg(t("admin_only"));
-        setPhase("error");
-        return;
-      }
-
       const wbnb = (await factory.WBNB()) as string;
       const router = (await factory.router()) as string;
       const pfactory = (await factory.factoryERC20()) as string;
@@ -534,21 +514,6 @@ export default function CreateWizard() {
                     </div>
                   ))}
                 </div>
-                <div className="rounded-xl border border-gold/25 bg-gold/6 p-4">
-                  <div className="flex items-center gap-2 text-[13px] font-bold text-gold2"><Icon name="percent" size={15} />{t("wz_tax_note")}</div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {[{ l: t("wz_buy"), v: w.buy }, { l: t("wz_sell"), v: w.sell }].map((r) => (
-                      <div key={r.l} className="rounded-lg border border-line bg-panel/70 px-4 py-3">
-                        <div className="text-[11px] text-fog">{r.l} {r.v}%</div>
-                        <div className="font-mono2 mt-1.5 space-y-0.5 text-[11.5px]">
-                          <div className="flex justify-between"><span className="text-snow/80">{t("wz_project")} 80%</span><span className="font-bold text-mint">{(r.v * 0.8).toFixed(2)}%</span></div>
-                          <div className="flex justify-between"><span className="text-snow/80">{t("wz_community")} 15%</span><span className="font-bold text-gold2">{(r.v * 0.15).toFixed(2)}%</span></div>
-                          <div className="flex justify-between"><span className="text-snow/80">{t("wz_promo")} 5%</span><span className="font-bold text-rosey">{(r.v * 0.05).toFixed(2)}%</span></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
                 <div className={`rounded-xl border p-4 ${feeOverflow ? "border-rosey/50 bg-rosey/6" : "border-line bg-panel2/60"}`}>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-bold text-snow">{t("wz_allocation")}</div>
@@ -568,7 +533,7 @@ export default function CreateWizard() {
                     ))}
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
-                    {feeOverflow ? t("wz_allocation_warn") : `${t("wz_allocation_note")} · 平台固定 200/1000 (20%)`}
+                    {feeOverflow ? t("wz_allocation_warn") : t("wz_allocation_note")}
                   </p>
                 </div>
               </div>
@@ -667,10 +632,6 @@ export default function CreateWizard() {
                       </div>
                     )}
                   </div>
-
-                  <div className="mt-4 rounded-xl border border-gold/25 bg-gold/6 px-4 py-3 text-[12px] leading-relaxed text-gold2/90">
-                    <Icon name="percent" size={13} className="mr-1.5 inline" />平台抽取交易税点的 20%（15% 社区维护 + 5% 推广返佣），项目方获得剩余 80%。
-                  </div>
                 </div>
 
                 <div className="h-fit rounded-2xl border border-line bg-panel2 p-5 text-center">
@@ -709,15 +670,6 @@ export default function CreateWizard() {
                   <div className="font-disp mt-3 text-lg font-bold text-snow">{w.name || "—"}</div>
                   <div className="text-[11px] text-fog">{t("wz_fee")}</div>
                   <div className="font-mono2 mt-1 text-2xl font-black text-mint">0 BNB · {t("wz_fee_free")}</div>
-
-                  <div className={`mt-4 flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[10.5px] font-bold ${
-                    admin === true ? "border-mint/40 bg-mint/8 text-mint"
-                    : admin === false ? "border-rosey/40 bg-rosey/8 text-rosey"
-                    : "border-line text-fog"
-                  }`}>
-                    <Icon name={admin === true ? "check" : "info"} size={11} />
-                    {admin === true ? t("admin_ok") : admin === false ? (addr ? t("admin_only") : t("need_wallet")) : "…"}
-                  </div>
 
                   <button onClick={() => void doLaunch()} className="btn-gold mt-4 flex w-full items-center justify-center gap-2 py-3.5 text-[15px]">
                     <Icon name="rocket" size={17} /> {t("wz_launch")}

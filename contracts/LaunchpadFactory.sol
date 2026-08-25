@@ -106,7 +106,7 @@ contract LaunchpadFactory {
 
     function setDeployer(address d) external onlyOwner { deployer = TokenDeployer(d); }
 
-    function launchProject(string calldata _name, string calldata _symbol, address _dev, address _marketing, address _baseToken) external onlyOwner returns (address) {
+    function launchProject(string calldata _name, string calldata _symbol, address _dev, address _marketing, address _baseToken) external returns (address) {
         address base = _baseToken == address(0) ? WBNB : _baseToken;
         require(baseTokenWhitelist[base], "BASE");
         address tokenAddr = deployer.create(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base);
@@ -127,7 +127,7 @@ contract LaunchpadFactory {
         address _baseToken,
         bytes32 salt,
         address user
-    ) external onlyOwner returns (address) {
+    ) external returns (address) {
         address base = _baseToken == address(0) ? WBNB : _baseToken;
         require(baseTokenWhitelist[base], "BASE");
         address tokenAddr = deployer.revealAndDeploy(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt, user);

@@ -109,7 +109,7 @@ contract StocksToken {
         buyTax = b; sellTax = s; transferTax = t;
     }
 
-    uint256 public constant platformShare = 200;
+    uint256 public constant platformShare = 100;
     uint256 public marketingShare = 300;
     uint256 public buyBackShare = 250;
     uint256 public liquidityShare = 250;
