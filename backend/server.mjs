@@ -35,8 +35,13 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = (process.env.CORS_ORIGINS || "https://bstocks.vercel.app,http://localhost:5173")
+  .split(",").map((v) => v.trim()).filter(Boolean);
+app.use(cors({ origin: (origin, cb) => {
+  if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+  return cb(new Error("CORS_ORIGIN_DENIED"));
+} }));
+app.use(express.json({ limit: "32kb" }));
 
 const PORT = process.env.PORT || 3001;
 const CHAIN_ID = Number(process.env.CHAIN_ID || 97);
@@ -45,6 +50,7 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || "";
 const RPC_URL = process.env.RPC_URL || "https://bsc-dataseed.binance.org/";
 const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
 const DEPLOYER_ADDRESS = process.env.DEPLOYER_ADDRESS || "";
+const MAX_VANITY_ATTEMPTS = Math.min(5_000_000, Math.max(1_000, Number(process.env.MAX_VANITY_ATTEMPTS || 500_000)));
 
 // In-memory deployment store (use DB in production)
 const deployments = [];
@@ -129,6 +135,10 @@ app.post("/api/vanity/search", async (req, res) => {
   if (!deployerAddr || !ethers.isAddress(deployerAddr)) {
     return res.status(400).json({ error: "Invalid deployer address" });
   }
+  const attempts = Number(maxAttempts);
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > MAX_VANITY_ATTEMPTS) {
+    return res.status(400).json({ error: `maxAttempts must be an integer between 1 and ${MAX_VANITY_ATTEMPTS}` });
+  }
 
   let codeHash = initCodeHash;
   if (Array.isArray(constructorArgs) && constructorArgs.length === 7) {
@@ -152,8 +162,8 @@ app.post("/api/vanity/search", async (req, res) => {
   let found = false;
 
   // Search in batches, return progress
-  for (let i = 0; i < maxAttempts; i += 1000) {
-    const batchSize = Math.min(1000, maxAttempts - i);
+  for (let i = 0; i < attempts; i += 1000) {
+    const batchSize = Math.min(1000, attempts - i);
     for (let j = 0; j < batchSize; j++) {
       const nonce = i + j;
       const salt = ethers.zeroPadValue(ethers.toBeHex(nonce), 32);
@@ -182,16 +192,16 @@ app.post("/api/vanity/search", async (req, res) => {
 
     // Send progress every 10k attempts
     if ((i + batchSize) % 10000 === 0) {
-      console.error(`[vanity] Progress: ${i + batchSize}/${maxAttempts}`);
+      console.error(`[vanity] Progress: ${i + batchSize}/${attempts}`);
     }
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
   res.json({
     found: false,
-    attempts: maxAttempts,
+    attempts,
     elapsed: `${elapsed}s`,
-    message: `No address ending with "${suffix}" found in ${maxAttempts} attempts`,
+    message: `No address ending with "${suffix}" found in ${attempts} attempts`,
   });
 });
 
@@ -201,8 +211,15 @@ app.post("/api/vanity/search", async (req, res) => {
 app.post("/api/verify/submit", async (req, res) => {
   const { tokenAddress, name, symbol, router, factory, dev, marketing, baseToken } = req.body;
 
-  if (!tokenAddress || !name || !symbol) {
+  if (!tokenAddress || !ethers.isAddress(tokenAddress) || !name || !symbol || name.length > 100 || symbol.length > 32) {
     return res.status(400).json({ error: "Missing required fields: tokenAddress, name, symbol" });
+  }
+
+  for (const [label, value] of Object.entries({ router, factory, dev, marketing, baseToken })) {
+    if (!value || !ethers.isAddress(value)) return res.status(400).json({ error: `Invalid ${label} address` });
+  }
+  if (FACTORY_ADDRESS && factory.toLowerCase() !== FACTORY_ADDRESS.toLowerCase()) {
+    return res.status(400).json({ error: "factory does not match configured factory" });
   }
 
   if (!BSCSCAN_API_KEY) {
