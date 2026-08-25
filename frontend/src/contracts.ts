@@ -410,6 +410,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         },
         spark: [],
         mcapSym: pool,
+        avatar: "1",
       };
       tokens.push(tk);
 

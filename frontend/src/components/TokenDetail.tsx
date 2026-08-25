@@ -35,6 +35,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const [wlText, setWlText] = useState("");
   const [wlBusy, setWlBusy] = useState(false);
   const [canManage, setCanManage] = useState(false);
+  const [avatarFail, setAvatarFail] = useState(false);
   useEffect(() => {
     let dead = false;
     void (async () => {
@@ -123,8 +124,9 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
       <div className="p-6 sm:p-8">
         {/* header */}
         <div className="flex flex-wrap items-start gap-4 pr-10">
-          {avUrl ? (
+          {avUrl && !avatarFail ? (
             <img src={avUrl} alt={tk.sym}
+              onError={() => setAvatarFail(true)}
               className="flex-none rounded-full border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
               style={{ width: 56, height: 56 }} />
           ) : (

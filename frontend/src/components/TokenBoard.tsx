@@ -25,6 +25,7 @@ export default function TokenBoard() {
   const [noFactory, setNoFactory] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [refreshAt, setRefreshAt] = useState(0);
+  const [failedAvatars, setFailedAvatars] = useState<Set<string>>(new Set());
   const factoryRef = useRef("");
   const timerRef = useRef<number | null>(null);
 
@@ -142,8 +143,9 @@ export default function TokenBoard() {
               <button onClick={() => setSel(tk)}
                 className="card-lift group flex w-full flex-col rounded-2xl border border-line bg-panel/85 p-4 text-left">
                 <div className="flex items-start gap-3">
-                  {avUrl ? (
+                  {avUrl && !failedAvatars.has(tk.ca.toLowerCase()) ? (
                     <img src={avUrl} alt={tk.sym}
+                      onError={() => setFailedAvatars((s) => new Set(s).add(tk.ca.toLowerCase()))}
                       className="flex-none rounded-full border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
                       style={{ width: 42, height: 42 }} />
                   ) : (
