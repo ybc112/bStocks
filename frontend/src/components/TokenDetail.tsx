@@ -26,8 +26,8 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const [pending, setPending] = useState(false);
   const cd = useCountdown(tk.refundTs);
   const pool = assetOf(tk.pool);
-  const pct = (tk.raised / tk.goal) * 100;
-  const graduated = tk.raised >= tk.goal || tk.cat === "listed";
+  const pct = tk.goal > 0 ? (tk.raised / tk.goal) * 100 : 0;
+  const graduated = (tk.goal > 0 && tk.raised >= tk.goal) || tk.cat === "listed";
   const chartData = useMemo(() => [...tk.spark, ...tk.spark.slice(1).map((v) => v * (1 + Math.random() * 0.06))], [tk]);
   const mintable = tk.mintLive !== false && !graduated;
 

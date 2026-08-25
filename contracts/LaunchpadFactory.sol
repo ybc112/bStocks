@@ -34,6 +34,7 @@ contract LaunchpadFactory {
     address[] public projects;
     mapping(address => bool) public isProject;
     mapping(address => bool) public baseTokenWhitelist;
+    mapping(address => address) public tokenCreator;
 
     mapping(address => address) public parentOf;
     mapping(address => bool) public registered;
@@ -42,6 +43,11 @@ contract LaunchpadFactory {
     uint256 public referralReserve;
 
     modifier onlyOwner() { require(msg.sender == owner, "NO"); _; }
+    modifier onlyProjectOwner(address t) {
+        require(isProject[t], "PRJ");
+        require(tokenCreator[t] == msg.sender || msg.sender == owner, "NA");
+        _;
+    }
     modifier nonReentrant() { require(!_inReentrant, "RE"); _inReentrant = true; _; _inReentrant = false; }
     bool internal _inReentrant;
 
@@ -115,6 +121,7 @@ contract LaunchpadFactory {
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;
+        tokenCreator[tokenAddr] = msg.sender;
         emit ProjectLaunched(tokenAddr, _dev, base);
         return tokenAddr;
     }
@@ -136,6 +143,7 @@ contract LaunchpadFactory {
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;
+        tokenCreator[tokenAddr] = msg.sender;
         emit ProjectLaunched2(tokenAddr, _dev, base, salt, true, _name, _symbol);
         emit ProjectLaunched(tokenAddr, _dev, base);
         return tokenAddr;
@@ -157,15 +165,15 @@ contract LaunchpadFactory {
 
     function _token(address t) internal pure returns (StocksToken) { return StocksToken(payable(t)); }
 
-    function configMint(address t, bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
+    function configMint(address t, bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyProjectOwner(t) {
         _token(t).setMintConfig(wl, rate, poolPct, lpRatio, minM, maxM, wCap, cap, duration);
     }
-    function configTax(address t, uint256 b, uint256 s, uint256 tr) external onlyOwner { _token(t).setTax(b, s, tr); }
-    function configFeeSplit(address t, uint256 m, uint256 bb, uint256 l) external onlyOwner { _token(t).setFeeSplit(m, bb, l); }
+    function configTax(address t, uint256 b, uint256 s, uint256 tr) external onlyProjectOwner(t) { _token(t).setTax(b, s, tr); }
+    function configFeeSplit(address t, uint256 m, uint256 bb, uint256 l) external onlyProjectOwner(t) { _token(t).setFeeSplit(m, bb, l); }
     function configExclude(address t, address a, bool f) external onlyOwner { _token(t).setExcluded(a, f); }
-    function configWhitelist(address t, address[] calldata addrs, bool f) external onlyOwner { _token(t).setWhitelist(addrs, f); }
-    function configDiv(address t, uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner { _token(t).enableDiv(id, rewardToken, minEligible, f); }
-    function configPool(address t, address p) external onlyOwner { _token(t).setPair(p); }
+    function configWhitelist(address t, address[] calldata addrs, bool f) external onlyProjectOwner(t) { _token(t).setWhitelist(addrs, f); }
+    function configDiv(address t, uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyProjectOwner(t) { _token(t).enableDiv(id, rewardToken, minEligible, f); }
+    function configPool(address t, address p) external onlyProjectOwner(t) { _token(t).setPair(p); }
 
     function register(address parent) external {
         require(parent != address(0) && parent != msg.sender, "PR");
