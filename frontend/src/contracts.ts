@@ -136,6 +136,37 @@ export async function verifySubmit(payload: {
   return j;
 }
 
+/* ---------------- avatar upload API ---------------- */
+export async function uploadAvatar(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(`${API_BASE}/api/upload/avatar`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || `upload avatar api ${r.status}`);
+  }
+  const j = (await r.json()) as { url: string };
+  return j.url;
+}
+
+export async function linkAvatar(tokenAddress: string, avatarUrl: string): Promise<string> {
+  const r = await fetch(`${API_BASE}/api/avatar/link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenAddress, avatarUrl }),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error((j as { error?: string }).error || `link avatar api ${r.status}`);
+  }
+  const j = (await r.json()) as { url: string };
+  return j.url;
+}
+
+export function avatarUrl(tokenAddress: string): string {
+  return `${API_BASE}/api/avatars/${tokenAddress.toLowerCase()}.webp`;
+}
+
 /* ---------------- multicall (Multicall3 on BSC) ---------------- */
 const MC3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const mcIface = new Interface(["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns (bool[] success, bytes[] returnData)"]);

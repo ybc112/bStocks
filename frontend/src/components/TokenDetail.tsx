@@ -4,7 +4,7 @@ import type { Token } from "../data";
 import { Contract, parseEther } from "ethers";
 import { AreaChart, Bar, CoinIcon, CopyBtn, Icon, Modal, useI18n, useToast } from "./ui";
 import { useWallet } from "./Header";
-import { TOKEN_ABI } from "../contracts";
+import { TOKEN_ABI, avatarUrl } from "../contracts";
 import { addrLink, txLink } from "../web3";
 
 function useCountdown(ts?: number) {
@@ -70,12 +70,21 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
     ? `${tk.price < 0.0001 && tk.price > 0 ? tk.price.toExponential(2) : tk.price.toFixed(6)} ${tk.pool}`
     : `$${tk.price.toFixed(6)}`;
 
+  // check if avatar file exists on backend
+  const avUrl = tk.avatar ? avatarUrl(tk.ca) : null;
+
   return (
     <Modal onClose={onClose} w="max-w-5xl">
       <div className="p-6 sm:p-8">
         {/* header */}
         <div className="flex flex-wrap items-start gap-4 pr-10">
-          <CoinIcon sym={tk.sym} color={tk.color} size={56} />
+          {avUrl ? (
+            <img src={avUrl} alt={tk.sym}
+              className="flex-none rounded-full border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
+              style={{ width: 56, height: 56 }} />
+          ) : (
+            <CoinIcon sym={tk.sym} color={tk.color} size={56} />
+          )}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="font-disp text-2xl font-bold text-snow">{lang === "zh" ? tk.nameZh : tk.nameEn}</h2>

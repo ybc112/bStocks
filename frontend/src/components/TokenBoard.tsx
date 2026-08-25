@@ -4,7 +4,7 @@ import type { Cat, Token } from "../data";
 import { Bar, CoinIcon, Icon, Reveal, SectionHead, Spark, useI18n } from "./ui";
 import TokenDetail from "./TokenDetail";
 import { Contract } from "ethers";
-import { loadProjects, resolveFactoryAddress, FACTORY_ABI } from "../contracts";
+import { loadProjects, resolveFactoryAddress, FACTORY_ABI, avatarUrl } from "../contracts";
 import { readOnlyProvider } from "../web3";
 
 const TABS: { k: Cat; icon: string }[] = [
@@ -136,12 +136,19 @@ export default function TokenBoard() {
         {list.map((tk, i) => {
           const pct = (tk.raised / tk.goal) * 100;
           const listed = tk.cat === "listed";
+          const avUrl = tk.avatar ? avatarUrl(tk.ca) : null;
           return (
             <Reveal key={tk.id} delay={i * 60}>
               <button onClick={() => setSel(tk)}
                 className="card-lift group flex w-full flex-col rounded-2xl border border-line bg-panel/85 p-4 text-left">
                 <div className="flex items-start gap-3">
-                  <CoinIcon sym={tk.sym} color={tk.color} size={42} />
+                  {avUrl ? (
+                    <img src={avUrl} alt={tk.sym}
+                      className="flex-none rounded-full border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
+                      style={{ width: 42, height: 42 }} />
+                  ) : (
+                    <CoinIcon sym={tk.sym} color={tk.color} size={42} />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-[15px] font-bold text-snow">{lang === "zh" ? tk.nameZh : tk.nameEn}</h3>

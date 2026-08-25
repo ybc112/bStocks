@@ -5,6 +5,7 @@
  * 1. Vanity address salt search (offline worker)
  * 2. BSCScan contract verification after deployment
  * 3. Deployment metadata storage
+ * 4. Token avatar upload and serve
  * 
  * Environment variables:
  *   PORT=3001
@@ -30,6 +31,8 @@ import { createRequire } from "module";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
+import { randomUUID } from "crypto";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -54,6 +57,23 @@ const MAX_VANITY_ATTEMPTS = Math.min(5_000_000, Math.max(1_000, Number(process.e
 
 // In-memory deployment store (use DB in production)
 const deployments = [];
+
+// ---- Avatar upload config ----
+const AVATAR_DIR = path.join(__dirname, "avatars");
+if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, AVATAR_DIR),
+  filename: (_req, _file, cb) => cb(null, randomUUID() + ".webp"),
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"].includes(file.mimetype);
+    cb(ok ? null : new Error("Only PNG/JPEG/WebP/GIF/SVG allowed"), ok);
+  },
+});
 
 // Load contract artifact for init code hash
 let initCodeHash = null;
@@ -115,6 +135,42 @@ app.get("/api/config", (req, res) => {
     chainId: CHAIN_ID,
     chainName: CHAIN_ID === 97 ? "BNB Smart Chain Testnet" : "BNB Smart Chain",
   });
+});
+
+// ========== Avatar Upload ==========
+
+// Upload avatar image
+app.post("/api/upload/avatar", (req, res) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ error: `Upload error: ${err.message}` });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) return res.status(400).json({ error: "No file provided" });
+    res.json({ url: `/api/avatars/${req.file.filename}` });
+  });
+});
+
+// Serve avatar images
+app.use("/api/avatars", express.static(AVATAR_DIR, {
+  maxAge: "7d",
+  setHeaders: (res) => res.set("Cache-Control", "public, max-age=604800, immutable"),
+}));
+
+// Optional: Associate avatar with a token address (for persistent lookup)
+app.post("/api/avatar/link", express.json(), (req, res) => {
+  const { tokenAddress, avatarUrl } = req.body;
+  if (!tokenAddress || !ethers.isAddress(tokenAddress) || !avatarUrl) {
+    return res.status(400).json({ error: "tokenAddress and avatarUrl required" });
+  }
+  const filename = path.basename(avatarUrl);
+  const src = path.join(AVATAR_DIR, filename);
+  const dst = path.join(AVATAR_DIR, tokenAddress.toLowerCase() + ".webp");
+  if (!fs.existsSync(src)) return res.status(404).json({ error: "Avatar file not found" });
+  try { fs.copyFileSync(src, dst); } catch (e) { return res.status(500).json({ error: e.message }); }
+  res.json({ url: `/api/avatars/${tokenAddress.toLowerCase()}.webp` });
 });
 
 // ========== Vanity Address ==========
@@ -320,4 +376,5 @@ app.listen(PORT, () => {
   console.error(`[server] bStocks Launchpad Backend running on port ${PORT}`);
   console.error(`[server] Vanity search ${initCodeHash ? "ready" : "unavailable (no artifact)"}`);
   console.error(`[server] BSCScan verification ${BSCSCAN_API_KEY ? "ready" : "unavailable (no API key)"}`);
+  console.error(`[server] Avatar upload ready (${AVATAR_DIR})`);
 });

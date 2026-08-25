@@ -36,6 +36,7 @@ export type Token = {
   refundTs?: number;
   mintLive?: boolean;
   mcapSym?: string;
+  avatar?: string;
 };
 
 const sp = (a: number[]) => a;
@@ -53,7 +54,7 @@ export const TOKENS: Token[] = [
     cat: "grad", raised: 17.4, goal: 20, mcap: 960_000, vol: 312_000, holders: 1820, price: 0.00096, chg: 22.4, pool: "USDT", mode: "wl", poolRatio: 85,
     tax: { b: 3, s: 3, t: 0 }, supplyBase: "1亿", rate: 88000, ca: "0x2b4c6d8e0f1a2b3c4d5e6f7081920a1b2c3d4e5f", dev: "0x9c8b7a605f4e3d2c1b0a9f8e7d6c5b4a39281706", deadlineH: 9, color: "#38E1FF",
     mech: { burn: 1, mkt: 1, holder: "BNB", buyback: 0, lp: 1, burndiv: false },
-    spark: sp([20, 22, 21, 25, 24, 27, 26, 30, 33, 31, 35, 37, 40, 43]),
+    spark: sp([20, 22, 21, 25, 24, 27, 26, 30, 33, 31, 35, 37, 34, 43]),
   },
   {
     id: 3, sym: "BAIX", nameZh: "bStocks AI", nameEn: "bStocks AI", descZh: "平台首个 AI 代理叙事代币,毕业 4 小时即上所,交易量飙升。", descEn: "First AI-agent narrative on the pad — listed 4h after graduation, volume soaring.",

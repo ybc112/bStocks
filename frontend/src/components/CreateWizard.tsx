@@ -9,6 +9,7 @@ import { useWallet } from "./Header";
 import { readOnlyProvider, txLink, addrLink } from "../web3";
 import {
   FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, vanitySearch, verifySubmit, resolveFactoryAddress,
+  uploadAvatar, linkAvatar,
 } from "../contracts";
 
 type W = {
@@ -89,6 +90,9 @@ export default function CreateWizard() {
   const [result, setResult] = useState<{ ca: string; salt: string; txs: string[] }>({ ca: "", salt: "", txs: [] });
   const [errMsg, setErrMsg] = useState("");
   const [admin, setAdmin] = useState<boolean | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string>("");
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const set = (patch: Partial<W>) => setW((v) => ({ ...v, ...patch }));
   const setStage = (k: StageKey, s: Stage) => setStages((v) => ({ ...v, [k]: s }));
 
@@ -256,6 +260,17 @@ export default function CreateWizard() {
       } catch (e) {
         setStage("verify", { state: "err", info: (e as Error).message });
       }
+
+      // link avatar if uploaded
+      if (avatarFile) {
+        try {
+          setAvatarUploading(true);
+          const url = await uploadAvatar(avatarFile);
+          await linkAvatar(tokenAddr, url);
+          setAvatarUploading(false);
+        } catch { setAvatarUploading(false); }
+      }
+
       setResult((r) => ({ ...r, txs }));
       setPhase("done");
       toast(`${t("wz_success")} ${w.sym.toUpperCase()}`);
@@ -659,6 +674,37 @@ export default function CreateWizard() {
                 </div>
 
                 <div className="h-fit rounded-2xl border border-line bg-panel2 p-5 text-center">
+                  {/* avatar upload */}
+                  <div className="mb-4">
+                    {avatarPreview ? (
+                      <div className="relative mx-auto" style={{ width: 54, height: 54 }}>
+                        <img src={avatarPreview} alt="avatar" className="h-full w-full rounded-full border-2 border-gold/60 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]" />
+                        <button onClick={() => { setAvatarFile(null); setAvatarPreview(""); }}
+                          className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-rosey/60 bg-abyss text-rosey transition hover:bg-rosey hover:text-abyss">
+                          <Icon name="close" size={10} />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className={`mx-auto flex cursor-pointer flex-col items-center justify-center rounded-full border-2 border-dashed transition ${
+                        avatarUploading ? "border-gold/40 bg-gold/8" : "border-line hover:border-gold/50 hover:bg-gold/5"
+                      }`} style={{ width: 54, height: 54 }}>
+                        {avatarUploading ? (
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-gold/30 border-t-gold" />
+                        ) : (
+                          <Icon name="plus" size={18} className="text-fog" />
+                        )}
+                        <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" className="hidden"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            if (f.size > 2 * 1024 * 1024) { toast("头像文件不能超过 2MB", "warn"); return; }
+                            setAvatarFile(f);
+                            setAvatarPreview(URL.createObjectURL(f));
+                          }} />
+                      </label>
+                    )}
+                    <div className="mt-1 text-[9px] text-fog">头像 (可选)</div>
+                  </div>
                   <CoinIcon sym={w.sym || "NEW"} color="#f0b90b" size={54} />
                   <div className="font-disp mt-3 text-lg font-bold text-snow">{w.name || "—"}</div>
                   <div className="text-[11px] text-fog">{t("wz_fee")}</div>
