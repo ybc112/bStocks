@@ -4,8 +4,8 @@ import type { Token } from "../data";
 import { Contract, parseEther } from "ethers";
 import { AreaChart, Bar, CoinIcon, CopyBtn, Icon, Modal, useI18n, useToast } from "./ui";
 import { useWallet } from "./Header";
-import { TOKEN_ABI, avatarUrl } from "../contracts";
-import { addrLink, txLink } from "../web3";
+import { TOKEN_ABI, FACTORY_ABI, avatarUrl, resolveFactoryAddress } from "../contracts";
+import { addrLink, txLink, readOnlyProvider } from "../web3";
 
 function useCountdown(ts?: number) {
   const [left, setLeft] = useState(() => (ts ? ts * 1000 - Date.now() : 0));
@@ -30,6 +30,51 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const graduated = (tk.goal > 0 && tk.raised >= tk.goal) || tk.cat === "listed";
   const chartData = useMemo(() => [...tk.spark, ...tk.spark.slice(1).map((v) => v * (1 + Math.random() * 0.06))], [tk]);
   const mintable = tk.mintLive !== false && !graduated;
+  const isWl = tk.mode === "wl";
+  const [wlShow, setWlShow] = useState(false);
+  const [wlText, setWlText] = useState("");
+  const [wlBusy, setWlBusy] = useState(false);
+  const [canManage, setCanManage] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    void (async () => {
+      if (!isWl || !addr) return;
+      try {
+        const fa = await resolveFactoryAddress();
+        if (!fa || dead) return;
+        const fac = new Contract(fa, FACTORY_ABI, readOnlyProvider());
+        const [owner, creator] = await Promise.all([
+          fac.owner() as Promise<string>,
+          fac.tokenCreator(tk.ca) as Promise<string>,
+        ]);
+        if (!dead) setCanManage(addr.toLowerCase() === owner.toLowerCase() || addr.toLowerCase() === creator.toLowerCase());
+      } catch { /* ignore */ }
+    })();
+    return () => { dead = true; };
+  }, [isWl, addr, tk.ca]);
+
+  const addWhitelist = async () => {
+    if (!addr) { toast(t("need_wallet"), "warn"); return; }
+    if (!isBsc) { toast(t("wrong_chain"), "warn"); return; }
+    const addrs = wlText.split(/[\s,;]+/).map((x) => x.trim()).filter((x) => x.length === 42 && x.startsWith("0x"));
+    if (!addrs.length) { toast("请填写有效地址", "warn"); return; }
+    setWlBusy(true);
+    try {
+      const signer = await getSigner();
+      if (!signer) { toast(t("need_wallet"), "warn"); return; }
+      const fa = await resolveFactoryAddress();
+      if (!fa) { toast(t("err_no_factory"), "warn"); return; }
+      const fac = new Contract(fa, FACTORY_ABI, signer);
+      const tx = await fac.configWhitelist(tk.ca, addrs, true);
+      toast(`${t("tx_sent")}`);
+      const rc = await tx.wait();
+      if (rc?.status === 1) { toast("白名单已更新"); setWlText(""); setWlShow(false); }
+      if (rc?.transactionHash) window.open(txLink(rc.transactionHash), "_blank");
+    } catch (e) {
+      const msg = (e as Error).message || "";
+      toast(msg.includes("user rejected") ? t("tx_rejected") : `白名单失败: ${msg.slice(0, 100)}`, "warn");
+    } finally { setWlBusy(false); }
+  };
 
   const doMint = async () => {
     if (!addr) { toast(t("need_wallet"), "warn"); return; }
@@ -186,6 +231,30 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
                 <span className="chip !border-cy/40 !text-cy"><Icon name="shield" size={12} />{t("refund_badge")}</span>
               )}
             </div>
+
+            {isWl && !graduated && canManage && (
+              <div className="mt-3 rounded-xl border border-cy/25 bg-cy/6 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-cy"><Icon name="shield" size={13} />{lang === "zh" ? "白名单管理" : "Whitelist"}</span>
+                  <button type="button" onClick={() => setWlShow(!wlShow)}
+                    className="font-mono2 rounded-lg border border-cy/40 px-2.5 py-1 text-[10.5px] font-bold text-cy transition hover:bg-cy/10">
+                    {wlShow ? "取消" : "追加地址"}
+                  </button>
+                </div>
+                {wlShow && (
+                  <div className="fade-in mt-2">
+                    <textarea className="field min-h-[70px] resize-none font-mono2 text-[11.5px]" value={wlText}
+                      onChange={(e) => setWlText(e.target.value)}
+                      placeholder="粘贴要加入白名单的地址，每行一个，支持空格/逗号分隔" />
+                    <button type="button" onClick={() => void addWhitelist()} disabled={wlBusy}
+                      className="btn-gold mt-2 flex w-full items-center justify-center gap-2 py-2 text-xs disabled:opacity-50">
+                      {wlBusy ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-abyss/40 border-t-abyss" /> : <Icon name="shield" size={13} />}
+                      {wlBusy ? t("tx_pending") : "提交白名单"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mt-4">
               <div className="mb-1.5 flex justify-between text-[11.5px]">

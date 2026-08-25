@@ -39,6 +39,7 @@ export const FACTORY_ABI = [
   "function projects(uint256) view returns (address)",
   "function isProject(address) view returns (bool)",
   "function baseTokenWhitelist(address) view returns (bool)",
+  "function tokenCreator(address) view returns (address)",
   "function registered(address) view returns (bool)",
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
