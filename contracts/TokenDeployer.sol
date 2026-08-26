@@ -21,6 +21,10 @@ contract TokenDeployer {
         saltCommitter[commitment] = msg.sender;
     }
 
+    function initCodeHash(string calldata name, string calldata symbol, address router, address _factory, address dev, address marketing, address baseToken) external pure returns (bytes32) {
+        return keccak256(abi.encodePacked(type(StocksToken).creationCode, abi.encode(name, symbol, router, _factory, dev, marketing, baseToken)));
+    }
+
     function revealAndDeploy(
         string calldata name,
         string calldata symbol,

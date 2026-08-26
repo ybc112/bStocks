@@ -154,7 +154,8 @@ export default function CreateWizard() {
       let vanityAddr = "";
       setStage("vanity", { state: "run" });
       if (w.vanityOn) {
-        const v = await vanitySearch(w.vanitySuffix, deployerAddr, [w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase], 5000000);
+        const codeHash = await new Contract(deployerAddr, DEPLOYER_ABI, readOnlyProvider()).initCodeHash(w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase) as string;
+        const v = await vanitySearch(w.vanitySuffix, deployerAddr, [w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase], 5000000, codeHash);
         if (!v.found || !v.salt) {
           setStage("vanity", { state: "err", info: v.message || "not found" });
           setErrMsg(t("err_vanity"));
