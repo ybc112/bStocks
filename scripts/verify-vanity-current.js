@@ -1,7 +1,7 @@
 const hre = require("hardhat");
 const { ethers } = hre;
 
-const FACTORY = "0xaB1c6C7FC04A7b670f6c4f2d465B545fa921cEa2";
+const FACTORY = "0x60ce75Dcc4218190e282e5ee5eDc5F60e68b93De";
 const API = "https://bstocks-api.kimi-vault.com";
 
 async function main() {
