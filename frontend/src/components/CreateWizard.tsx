@@ -114,7 +114,6 @@ export default function CreateWizard() {
     if (w.holderToken === "custom" && !isAddress(w.customCa)) return `${t("wz_custom_ca")}: ${t("err_addr")}`;
     if (w.capBNB < 0.1) return `${t("wz_goal")}: >= 0.1 BNB`;
     if (feeOverflow) return t("wz_allocation_warn");
-    if (w.mode === "wl" && wlCount === 0) return `${t("wz_whitelist_batch")}: ${t("err_wl_empty")}`;
     if (w.vanityOn && !/^[0-9a-fA-F]{4,8}$/.test(w.vanitySuffix)) return `${t("wz_vanity_suffix")}: 0-9 a-f x4-8`;
     return null;
   };
@@ -171,14 +170,11 @@ export default function CreateWizard() {
       }
 
       setStage("commit", { state: "run" });
-      const predicted = (await factory.predictTokenAddress(w.name, w.sym, w.dev, marketing, base, salt)) as string;
-      if (vanityAddr && predicted.toLowerCase() !== vanityAddr.toLowerCase()) {
-        toast(t("err_vanity"), "warn");
-      }
+      const predicted = vanityAddr || "";
       const commitment = computeCommitment(addr!, salt, w.name, w.sym, resolvedBase);
       const deployer = new Contract(deployerAddr, DEPLOYER_ABI, signer);
       txs.push(await waitTx("commitSalt", deployer.commitSalt(commitment)));
-      setStage("commit", { state: "ok", info: predicted });
+      setStage("commit", { state: "ok", info: predicted || "committed" });
 
       setStage("deploy", { state: "run" });
       const depTx = await factory.launchProjectDeterministic(w.name, w.sym, w.dev, marketing, base, salt, addr!);
@@ -202,7 +198,7 @@ export default function CreateWizard() {
         w.mode === "wl",
         BigInt(Math.round(w.mintRate)),
         BigInt(Math.round(w.poolPercent * 10)),
-        BigInt(Math.round(w.lpTokenRatio)),
+        BigInt(Math.round(w.lpTokenRatio * 10)),
         parseEther(String(w.minMint)),
         parseEther(String(w.maxMint)),
         parseEther(String(w.walletCap)),
@@ -226,9 +222,6 @@ export default function CreateWizard() {
       }
       if (w.bdOn) {
         txs.push(await waitTx("configDiv(BURN)", factory.configDiv(tokenAddr, 3, rewardAddr(w.holderToken), 0n, true)));
-      }
-      if (w.mode === "wl") {
-        txs.push(await waitTx("configWhitelist", factory.configWhitelist(tokenAddr, parseWl(w.wlAddrs), true)));
       }
       setResult((r) => ({ ...r, txs }));
       setStage("config", { state: "ok", info: `${txs.length - 2} tx` });
@@ -442,9 +435,8 @@ export default function CreateWizard() {
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     {w.mode === "time" && <div><Lbl>{t("wz_dur")}</Lbl><input type="number" min={1} className="field font-mono2" value={w.durH} onChange={(e) => set({ durH: +e.target.value })} /></div>}
                     {w.mode === "wl" && (
-                      <div className="sm:col-span-2">
-                        <Lbl>{t("wz_whitelist_batch")} · {wlCount} addr · {t("wz_whitelist_max")}</Lbl>
-                        <textarea className="field min-h-[90px] resize-none font-mono2 text-[11.5px]" value={w.wlAddrs} onChange={(e) => set({ wlAddrs: e.target.value })} placeholder={t("wz_whitelist_placeholder")} />
+                      <div className="sm:col-span-2 rounded-xl border border-cy/25 bg-cy/6 p-3 text-xs text-fog">
+                        代币创建成功后，在代币详情的“白名单管理”中批量添加地址并单独上链。
                       </div>
                     )}
                   </div>
@@ -481,14 +473,14 @@ export default function CreateWizard() {
 
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
-                    <div className="flex items-baseline justify-between"><Lbl>Mint → LP 比例 (poolPercent)</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
-                    <input type="range" min={50} max={100} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">剩余 {100 - w.poolPercent}% 归 Dev 钱包</p>
+                    <div className="flex items-baseline justify-between"><Lbl>加池代币比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
+                    <input type="range" min={10} max={90} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">加池 {w.poolPercent}% · Mint 用户分配 {100 - w.poolPercent}% · 剩余 BNB 转给 Dev</p>
                   </div>
                   <div>
-                    <div className="flex items-baseline justify-between"><Lbl>LP 代币倍率 (lpTokenRatio)</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.lpTokenRatio}/1000</span></div>
-                    <input type="range" min={1} max={1000} step={1} value={w.lpTokenRatio} onChange={(e) => set({ lpTokenRatio: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">LP 对中代币数量的 mintRate 比例</p>
+                    <div className="flex items-baseline justify-between"><Lbl>LP 代币使用比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.lpTokenRatio}%</span></div>
+                    <input type="range" min={10} max={100} step={1} value={w.lpTokenRatio} onChange={(e) => set({ lpTokenRatio: +e.target.value })} className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">100% = 完整使用 LP 储备，50% = 使用一半</p>
                   </div>
                 </div>
 
@@ -496,7 +488,7 @@ export default function CreateWizard() {
 
                 <div className="rounded-xl border border-gold/15 bg-gold/5 p-3 text-xs text-fog">
                   <Icon name="info" size={12} className="mr-1 inline text-gold" />
-                  未打满 24 小时内可退款；白名单地址在发射最后一步链上写入。
+                  未打满 24 小时后可退款；白名单模式创建后，在代币详情中追加地址上链。
                 </div>
               </div>
             )}
@@ -517,23 +509,23 @@ export default function CreateWizard() {
                 <div className={`rounded-xl border p-4 ${feeOverflow ? "border-rosey/50 bg-rosey/6" : "border-line bg-panel2/60"}`}>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-bold text-snow">{t("wz_allocation")}</div>
-                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{feeTotal} / 900 permille</span>
+                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{(feeTotal / 9).toFixed(1)}% / 100%</span>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     {([
-                      { k: "feeMkt" as const, l: `${t("mech_mkt")} permille`, on: w.mktOn },
-                      { k: "feeBb" as const, l: `${t("mech_buyback")} permille`, on: w.buybackOn },
-                      { k: "feeLiq" as const, l: `${t("wz_liq_share")} permille`, on: true },
+                      { k: "feeMkt" as const, l: t("mech_mkt"), on: w.mktOn },
+                      { k: "feeBb" as const, l: t("mech_buyback"), on: w.buybackOn },
+                      { k: "feeLiq" as const, l: t("wz_liq_share"), on: true },
                       { k: "feeSelf" as const, l: `${t("mech_holder")}·${t("opt_native")}`, on: w.holderOn && w.holderToken === "native" },
                     ]).map((x) => (
                       <div key={x.k} className={x.on ? "" : "opacity-40"}>
-                        <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{w[x.k]}</span></div>
+                        <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 9).toFixed(1)}%</span></div>
                         <input type="range" min={0} max={800} step={10} value={w[x.k]} onChange={(e) => set({ [x.k]: +e.target.value })} className="w-full" />
                       </div>
                     ))}
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
-                    {feeOverflow ? t("wz_allocation_warn") : t("wz_allocation_note")}
+                    {feeOverflow ? t("wz_allocation_warn") : "项目税收分配合计 100%，平台另从交易税中抽取 20%"}
                   </p>
                 </div>
               </div>
@@ -541,7 +533,7 @@ export default function CreateWizard() {
 
             {step === 3 && (
               <div className="fade-in space-y-3">
-                <p className="mb-4 text-[12.5px] text-fog"><Icon name="info" size={13} className="mr-1.5 inline text-gold" />{t("wz_mech_note")}</p>
+                <p className="mb-4 text-[12.5px] text-fog"><Icon name="info" size={13} className="mr-1.5 inline text-gold" />持币分红、加池分红、燃烧分红三选一；营销和回购可独立开启。</p>
 
                 <Tgl on={w.mktOn} set={(v) => set({ mktOn: v })} icon="gift" label={t("mech_mkt")}>
                   <input className="field font-mono2" value={w.mktWallet} onChange={(e) => set({ mktWallet: e.target.value })} placeholder={`${t("wz_mkt_wallet")} 0x…`} />
@@ -552,7 +544,7 @@ export default function CreateWizard() {
                   <p className="text-[12px] leading-relaxed text-fog">{t("wz_buyback_pct")} {w.feeBb}/1000 — {t("wz_buyback_note")}</p>
                 </Tgl>
 
-                <Tgl on={w.holderOn} set={(v) => set({ holderOn: v })} icon="coins" label={t("mech_holder")}>
+                <Tgl on={w.holderOn} set={(v) => set({ holderOn: v, lpOn: v ? false : w.lpOn, bdOn: v ? false : w.bdOn })} icon="coins" label={t("mech_holder")}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <Lbl>{t("wz_reward_token")}</Lbl>
@@ -568,7 +560,7 @@ export default function CreateWizard() {
                   </div>
                 </Tgl>
 
-                <Tgl on={w.lpOn} set={(v) => set({ lpOn: v })} icon="drop" label={t("mech_lp")}>
+                <Tgl on={w.lpOn} set={(v) => set({ lpOn: v, holderOn: v ? false : w.holderOn, bdOn: v ? false : w.bdOn })} icon="drop" label={t("mech_lp")}>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div><Lbl>{t("wz_reward_token")}</Lbl>
                       <div className="flex flex-wrap gap-1.5">
@@ -582,7 +574,7 @@ export default function CreateWizard() {
                   </div>
                 </Tgl>
 
-                <Tgl on={w.bdOn} set={(v) => set({ bdOn: v })} icon="fire" label={t("mech_burndiv")}>
+                <Tgl on={w.bdOn} set={(v) => set({ bdOn: v, holderOn: v ? false : w.holderOn, lpOn: v ? false : w.lpOn })} icon="fire" label={t("mech_burndiv")}>
                   <p className="text-[12px] leading-relaxed text-fog">{t("wz_burndiv_note")} · {t("wz_reward_token")}: {optLabel(w.holderToken)}</p>
                 </Tgl>
               </div>

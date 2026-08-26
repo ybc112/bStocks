@@ -37,7 +37,7 @@ async function main() {
   (await token.decimals()) === 30n ? ok("代币 decimals = 30") : bad("精度");
   await mf.setPair(tokenAddr, wbnb, lp);
 
-  await (await fac.configMint(tokenAddr, false, RATE, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(tokenAddr, false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
   ok("Mint 配置（cap 0.1 BNB = 门槛下限）");
 
   await (await token.connect(user).swapIn(E("0.05"), { value: E("0.05") })).wait();

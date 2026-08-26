@@ -8,13 +8,13 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200
+        runs: 0
       },
       viaIR: true
     }
   },
   networks: {
-    hardhat: {},
+    hardhat: { allowUnlimitedContractSize: true },
     bscTestnet: {
       url: process.env.TESTNET_RPC_URL || "https://bsc-testnet.publicnode.com",
       chainId: 97,

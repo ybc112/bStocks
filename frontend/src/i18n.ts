@@ -1,7 +1,7 @@
 export type Lang = "zh" | "en";
 
 const zh = {
-  nav_board: "代币广场", nav_create: "发射台", nav_mech: "收益机制", nav_ref: "推广返佣", nav_assets: "底池资产",
+  nav_board: "代币广场", nav_create: "发射台", nav_mech: "股东分红", nav_ref: "推广返佣", nav_assets: "底池资产",
   connect: "连接钱包", connected: "已连接", wallet_title: "连接钱包", wallet_sub: "选择钱包以参与 Mint 与分红", disconnect: "断开连接",
   hero_kicker: "BSC CHAIN · 多零 MINT 发射台",
   hero_t1: "30 个零,", hero_t2: "一次发射上链",
@@ -106,7 +106,7 @@ const zh = {
 };
 
 const en: typeof zh = {
-  nav_board: "Board", nav_create: "Launchpad", nav_mech: "Mechanics", nav_ref: "Referral", nav_assets: "Pool Assets",
+  nav_board: "Board", nav_create: "Launchpad", nav_mech: "Shareholder Dividends", nav_ref: "Referral", nav_assets: "Pool Assets",
   connect: "Connect", connected: "connected", wallet_title: "Connect Wallet", wallet_sub: "Pick a wallet to mint & earn dividends", disconnect: "Disconnect",
   hero_kicker: "BSC CHAIN · MULTI-ZERO MINT PAD",
   hero_t1: "30 zeros.", hero_t2: "One launch.",

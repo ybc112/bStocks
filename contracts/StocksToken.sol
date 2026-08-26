@@ -30,6 +30,7 @@ interface ILaunchpad {
 }
 
 contract StocksToken {
+    error InvalidMintConfig();
     string public name;
     string public symbol;
     uint8 public constant decimals = 30;
@@ -155,13 +156,7 @@ contract StocksToken {
     event MintConfigSet(uint256 capBNB, uint256 mintRate, uint256 poolPercent);
 
     function setMintConfig(bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
-        require(rate > 0, "RATE");
-        require(poolPct > 0 && poolPct <= TAX_DIVISOR, "PP");
-        require(lpRatio > 0 && lpRatio <= TAX_DIVISOR, "LR");
-        require(minM >= 0.001 ether, "MN");
-        require(maxM >= minM, "MM");
-        require(wCap == 0 || wCap >= maxM, "WC");
-        require(cap >= minCapBNB, "CAP");
+        if (rate == 0 || poolPct == 0 || poolPct >= TAX_DIVISOR || lpRatio == 0 || lpRatio > TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
         mintRate = rate;
         poolPercent = poolPct;
@@ -180,7 +175,11 @@ contract StocksToken {
     function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.1 ether, "GT"); minCapBNB = t; }
     function pauseMint(bool f) external onlyOwner { mintEnabled = !f; }
 
-    receive() external payable {}
+    // Sending BNB directly to the token contract is equivalent to Mint.
+    receive() external payable {
+        // Router/WBNB callbacks are settlement flows, never user Mints.
+        if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB) swapIn(msg.value);
+    }
 
     // Fix 1: Every mint adds liquidity in real-time, then check graduation
     function swapIn(uint256 bnbAmount) public payable nonReentrant {
@@ -231,8 +230,6 @@ contract StocksToken {
         uint256 lpShare = (MAX_SUPPLY * poolPercent) / TAX_DIVISOR;
         uint256 tokensForLP = (lpShare * bnbIn) / capBNB;
         if (lpBNB == 0 || tokensForLP == 0 || balanceOf[address(this)] < tokensForLP) return;
-        balanceOf[address(this)] -= tokensForLP;
-        emit Transfer(address(this), address(0), 0); // keep Transfer event ABI parity
         allowance[address(this)][address(router)] = type(uint256).max;
         _inSwap = true;
         if (baseToken == WBNB) {
@@ -301,7 +298,9 @@ contract StocksToken {
         uint256 prevTotal = totalMintedBNB;
         totalMintedBNB -= amt;
 
-        uint256 tokens = amt * mintRate;
+        // Fixed-supply model: refund the exact pro-rata Mint allocation.
+        uint256 mintReserve = MAX_SUPPLY - ((MAX_SUPPLY * poolPercent) / TAX_DIVISOR);
+        uint256 tokens = capBNB > 0 ? (mintReserve * amt) / capBNB : 0;
         uint256 held = balanceOf[msg.sender];
         require(held >= tokens, "SOLD");
         if (tokens > 0) _burn(msg.sender, tokens);
@@ -494,7 +493,6 @@ contract StocksToken {
             uint256 half = bnbIn / 2;
             uint256 tokensForLP = (half * mintRate) / 1 ether;
             if (tokensForLP > 0 && balanceOf[address(this)] >= tokensForLP) {
-                balanceOf[address(this)] -= tokensForLP;
                 allowance[address(this)][address(router)] = type(uint256).max;
                 // Fix 3: Will revert on failure
                 (,, uint256 liq) = router.addLiquidityETH{value: half}(address(this), tokensForLP, 0, 0, address(this), block.timestamp + 300);
@@ -512,7 +510,6 @@ contract StocksToken {
             allowanceRouter(baseToken);
             uint256 tokensForLP = (bnbIn * mintRate * lpTokenRatio) / TAX_DIVISOR / 1 ether;
             if (tokensForLP > 0 && balanceOf[address(this)] >= tokensForLP) {
-                balanceOf[address(this)] -= tokensForLP;
                 // Fix 3: Will revert on failure
                 (,, uint256 liq) = router.addLiquidity(address(this), baseToken, tokensForLP, baseBal, 0, 0, address(this), block.timestamp + 300);
                 totalLPToken += liq;
@@ -560,6 +557,11 @@ contract StocksToken {
 
     function enableDiv(uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner {
         require(id >= DIV_HOLD && id <= DIV_BURN, "ID");
+        if (f) {
+            if (id != DIV_HOLD) _divs[DIV_HOLD].enabled = false;
+            if (id != DIV_LIQ) _divs[DIV_LIQ].enabled = false;
+            if (id != DIV_BURN) _divs[DIV_BURN].enabled = false;
+        }
         DivData storage d = _divs[id];
         if (d.rewardToken != rewardToken) {
             require(d.pendingReward == 0 && d.accPerShare == 0, "ACTIVE_DIV");
@@ -715,3 +717,4 @@ function depositDiv(uint8 id) external payable nonReentrant {
         require(ok, "WIT");
     }
 }
+

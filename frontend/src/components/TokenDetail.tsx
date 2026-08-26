@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { assetOf, short } from "../data";
 import type { Token } from "../data";
-import { Contract, parseEther } from "ethers";
+import { Contract, parseEther, isAddress } from "ethers";
 import { AreaChart, Bar, CoinIcon, CopyBtn, Icon, Modal, useI18n, useToast } from "./ui";
 import { useWallet } from "./Header";
 import { TOKEN_ABI, FACTORY_ABI, avatarUrl, resolveFactoryAddress } from "../contracts";
@@ -57,7 +57,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const addWhitelist = async () => {
     if (!addr) { toast(t("need_wallet"), "warn"); return; }
     if (!isBsc) { toast(t("wrong_chain"), "warn"); return; }
-    const addrs = wlText.split(/[\s,;]+/).map((x) => x.trim()).filter((x) => x.length === 42 && x.startsWith("0x"));
+    const addrs = wlText.split(/[\s,;]+/).map((x) => x.trim()).filter((x) => isAddress(x));
     if (!addrs.length) { toast("请填写有效地址", "warn"); return; }
     setWlBusy(true);
     try {

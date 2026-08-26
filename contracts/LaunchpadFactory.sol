@@ -115,7 +115,12 @@ contract LaunchpadFactory {
     function launchProject(string calldata _name, string calldata _symbol, address _dev, address _marketing, address _baseToken) external returns (address) {
         address base = _baseToken == address(0) ? WBNB : _baseToken;
         require(baseTokenWhitelist[base], "BASE");
-        address tokenAddr = deployer.create(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base);
+        // Keep StocksToken creation in TokenDeployer so this factory stays
+        // below the EVM 24KB contract-size limit.
+        bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, _name, _symbol, block.number, block.prevrandao));
+        bytes32 commitment = keccak256(abi.encode(address(this), salt, _name, _symbol, base));
+        deployer.commitSalt(commitment);
+        address tokenAddr = deployer.revealAndDeploy(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt, address(this));
         StocksToken t = StocksToken(payable(tokenAddr));
         t.acceptOwnership();
         t.setLaunchpad(address(this));
@@ -149,17 +154,6 @@ contract LaunchpadFactory {
         return tokenAddr;
     }
 
-    function predictTokenAddress(
-        string calldata _name,
-        string calldata _symbol,
-        address _dev,
-        address _marketing,
-        address _baseToken,
-        bytes32 salt
-    ) external view returns (address) {
-        address base = _baseToken == address(0) ? WBNB : _baseToken;
-        return deployer.predictAddress(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt);
-    }
 
     function handover(address t, address dev) external onlyOwner { _token(t).transferOwnership(dev); }
 

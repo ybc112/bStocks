@@ -6,7 +6,7 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0x8552648110Bd1792386CCCD8b5d24102C41DFb12";
+export const ENV_FACTORY: string = "0x216FF5f0C9778Df7b2B2E33395812Ba9B60a625a";
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
@@ -44,7 +44,6 @@ export const FACTORY_ABI = [
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
   "function launchProjectDeterministic(string,string,address,address,address,bytes32,address) returns (address)",
-  "function predictTokenAddress(string,string,address,address,address,bytes32) view returns (address)",
   "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
   "function configFeeSplit(address,uint256,uint256,uint256)",
@@ -56,7 +55,7 @@ export const FACTORY_ABI = [
   "event ProjectLaunched2(address indexed token, address indexed dev, address indexed baseToken, bytes32 salt, bool deterministic, string name, string symbol)",
 ];
 
-export const DEPLOYER_ABI = ["function commitSalt(bytes32)", "function predictAddress(string,string,address,address,address,address,bytes32) view returns (address)"];
+export const DEPLOYER_ABI = ["function commitSalt(bytes32)"];
 
 export const TOKEN_ABI = [
   "function name() view returns (string)",

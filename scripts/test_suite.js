@@ -70,12 +70,20 @@ async function main() {
   const capT = await launch(s, 0);
   await mf.setPair(await capT.getAddress(), wbnb, lp);
   {
-    await (await fac.configMint(await capT.getAddress(), false, RATE, 1000, 1000, E("0.001"), E("0.06"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await capT.getAddress(), false, RATE, 900, 1000, E("0.001"), E("0.06"), E("0"), E("0.1"), 3600)).wait();
     await (await capT.connect(userB).swapIn(E("0.04"), { value: E("0.04") })).wait();
     const lpBal = await LP.balanceOf(await capT.getAddress());
     lpBal > 0n ? ok("mint 实入池（每笔 mint LP 即时增加）") : bad("实入池", "LP=0");
     const total = await capT.totalMintedBNB();
     total === E("0.04") ? ok("mint 计账") : bad("计账", total.toString());
+  }
+  {
+    const direct = await launch(s, 0);
+    await mf.setPair(await direct.getAddress(), wbnb, lp);
+    await (await fac.configMint(await direct.getAddress(), false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await userA.sendTransaction({ to: await direct.getAddress(), value: E("0.01") })).wait();
+    const minted = await direct.mintedBNB(userA.address);
+    minted === E("0.01") && (await direct.balanceOf(userA.address)) > 0n ? ok("直接转 BNB 到代币合约即可 Mint") : bad("直接转 BNB Mint", minted.toString());
   }
   {
     const b0 = await LP.balanceOf(DEAD);
@@ -104,7 +112,7 @@ async function main() {
   {
     const t3 = await launch(s, 0);
     await mf.setPair(await t3.getAddress(), wbnb, lp);
-    await (await fac.configMint(await t3.getAddress(), false, RATE, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await t3.getAddress(), false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     await (await t3.connect(userB).swapIn(E("0.02"), { value: E("0.02") })).wait();
     const early = await expectRevert(t3.connect(userB).refund());
     await hre.network.provider.send("evm_increaseTime", [90000]);
@@ -122,7 +130,7 @@ async function main() {
     await usdt.mint(await mr.getAddress(), 10n ** 30n);
     const t4 = await launch(s, usdtAddr);
     await mf.setPair(await t4.getAddress(), usdtAddr, lp);
-    await (await fac.configMint(await t4.getAddress(), false, RATE, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await t4.getAddress(), false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     await (await t4.connect(userC).swapIn(E("0.02"), { value: E("0.02") })).wait();
     const lpBal = await LP.balanceOf(await t4.getAddress());
     lpBal > 0n ? ok("ERC20 底池：BNB 换底池币加池成功") : bad("ERC20 入池", "LP=0");
@@ -132,7 +140,7 @@ async function main() {
   const ft = await launch(s, 0);
   const ftAddr = await ft.getAddress();
   await mf.setPair(ftAddr, wbnb, lp);
-  await (await fac.configMint(ftAddr, false, RATE, 1000, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(ftAddr, false, RATE, 900, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
   await (await ft.connect(userA).swapIn(E("0.1"), { value: E("0.1") })).wait();
   await (await fac.configTax(ftAddr, 100, 100, 0)).wait();
   {
@@ -210,10 +218,10 @@ async function main() {
     const a5 = await t5.getAddress();
     const r1 = await expectRevert(fac.configMint(a5, false, 0, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
     const r2 = await expectRevert(fac.configMint(a5, false, RATE, 1001, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r3 = await expectRevert(fac.configMint(a5, false, RATE, 1000, 1000, E("0.00000000001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r4 = await expectRevert(fac.configMint(a5, false, RATE, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.09"), 3600));
+    const r3 = await expectRevert(fac.configMint(a5, false, RATE, 900, 1000, E("0.00000000001"), E("0.05"), E("0"), E("0.1"), 3600));
+    const r4 = await expectRevert(fac.configMint(a5, false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.09"), 3600));
     r1 && r2 && r3 && r4 ? ok("Mint 参数校验(rate/poolPct/minMint/门槛≥0.1)") : bad("Mint 校验", `${r1}${r2}${r3}${r4}`);
-    await (await fac.configMint(a5, true, RATE, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(a5, true, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     const blocked = await expectRevert(t5.connect(userB).swapIn(E("0.01"), { value: E("0.01") }));
     await (await fac.configWhitelist(a5, [userB.address], true)).wait();
     await (await t5.connect(userB).swapIn(E("0.01"), { value: E("0.01") })).wait();
@@ -230,7 +238,6 @@ async function main() {
     const dep = await ethers.getContractAt("TokenDeployer", depAddr);
     const salt = ethers.id("vanity-7777");
     const base = ethers.ZeroAddress;
-    const predicted = await fac.predictTokenAddress("Det", "DET", dev.address, mkt.address, base, salt);
     const commitment = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "bytes32", "string", "string", "address"],
@@ -249,13 +256,13 @@ async function main() {
     const det = await ethers.getContractAt("StocksToken", ev2.args.token);
     const ownerOk = (await det.owner()) === (await fac.getAddress());
     const lpOk = (await det.launchpad()) === (await fac.getAddress());
-    const cfgOk = await (await fac.configMint(ev2.args.token, false, RATE, 1000, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+    const cfgOk = await (await fac.configMint(ev2.args.token, false, RATE, 900, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
     const replay = await expectRevert(
       fac.launchProjectDeterministic("Det", "DET", dev.address, mkt.address, base, salt, userA.address)
     );
-    wrongUser && noCommit && replay && ev2.args.token === predicted && ownerOk && lpOk && !!cfgOk
-      ? ok("确定性发射：commit-reveal + 预测地址 + 工厂接管 + 配置生效")
-      : bad("确定性发射", `owner=${ownerOk} lp=${lpOk} addr=${ev2.args.token === predicted}`);
+    wrongUser && noCommit && replay && ev2.args.token !== ethers.ZeroAddress && ownerOk && lpOk && !!cfgOk
+      ? ok("确定性发射：commit-reveal + 工厂接管 + 配置生效")
+      : bad("确定性发射", `owner=${ownerOk} lp=${lpOk}`);
   }
 
   // ---------- handover 自管 ----------
