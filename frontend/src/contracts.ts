@@ -6,7 +6,7 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0x60ce75Dcc4218190e282e5ee5eDc5F60e68b93De";
+export const ENV_FACTORY: string = "0xE519DB58FF334AA3f83a7Fb7B584279BBecd9993";
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
@@ -55,7 +55,7 @@ export const FACTORY_ABI = [
   "event ProjectLaunched2(address indexed token, address indexed dev, address indexed baseToken, bytes32 salt, bool deterministic, string name, string symbol)",
 ];
 
-export const DEPLOYER_ABI = ["function commitSalt(bytes32)"];
+export const DEPLOYER_ABI = ["function commitSalt(bytes32)", "function initCodeHash(string,string,address,address,address,address,address) view returns (bytes32)"];
 
 export const TOKEN_ABI = [
   "function name() view returns (string)",
@@ -111,11 +111,11 @@ export function computeCommitment(user: string, salt: string, name: string, symb
 /* ---------------- backend API ---------------- */
 export type VanityResult = { found: boolean; salt?: string; address?: string; attempts?: number; elapsed?: string; message?: string };
 
-export async function vanitySearch(suffix: string, deployer: string, constructorArgs?: string[], maxAttempts = 200000): Promise<VanityResult> {
+export async function vanitySearch(suffix: string, deployer: string, constructorArgs?: string[], maxAttempts = 200000, initCodeHash?: string): Promise<VanityResult> {
   const r = await fetch(`${API_BASE}/api/vanity/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ suffix, deployer, maxAttempts, constructorArgs }),
+    body: JSON.stringify({ suffix, deployer, maxAttempts, constructorArgs, initCodeHash }),
   });
   if (!r.ok) throw new Error(`vanity api ${r.status}`);
   return (await r.json()) as VanityResult;
