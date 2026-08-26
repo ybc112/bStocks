@@ -53,7 +53,7 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || "";
 const RPC_URL = process.env.RPC_URL || "https://bsc-dataseed.binance.org/";
 const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
 const DEPLOYER_ADDRESS = process.env.DEPLOYER_ADDRESS || "";
-const MAX_VANITY_ATTEMPTS = Math.min(5_000_000, Math.max(1_000, Number(process.env.MAX_VANITY_ATTEMPTS || 500_000)));
+const MAX_VANITY_ATTEMPTS = Math.min(5_000_000, Math.max(1_000, Number(process.env.MAX_VANITY_ATTEMPTS || 5_000_000)));
 
 // In-memory deployment store (use DB in production)
 const deployments = [];
