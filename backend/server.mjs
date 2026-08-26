@@ -177,7 +177,7 @@ app.post("/api/avatar/link", express.json(), (req, res) => {
 
 // Search for a vanity salt
 app.post("/api/vanity/search", async (req, res) => {
-  const { suffix, deployer, maxAttempts = 50000, constructorArgs } = req.body;
+  const { suffix, deployer, maxAttempts = 50000, constructorArgs, initCodeHash: requestedHash } = req.body;
 
   if (!suffix || !/^[0-9a-fA-F]{4,8}$/.test(suffix)) {
     return res.status(400).json({ error: "Invalid suffix. Must be 4-8 hex characters (e.g., 7777)" });
@@ -196,7 +196,7 @@ app.post("/api/vanity/search", async (req, res) => {
     return res.status(400).json({ error: `maxAttempts must be an integer between 1 and ${MAX_VANITY_ATTEMPTS}` });
   }
 
-  let codeHash = initCodeHash;
+  let codeHash = typeof requestedHash === "string" && /^0x[0-9a-fA-F]{64}$/.test(requestedHash) ? requestedHash : initCodeHash;
   if (Array.isArray(constructorArgs) && constructorArgs.length === 7) {
     if (!stockArtifact) {
       return res.status(500).json({ error: "Contract artifact not loaded" });

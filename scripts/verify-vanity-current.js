@@ -16,13 +16,16 @@ async function main() {
   const symbol = `VP${nonce.slice(-4)}`;
   const args = [name, symbol, router, pancakeFactory, user.address, user.address, wbnb];
 
-  const response = await fetch(`${API}/api/vanity/search`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ suffix: "bbbb", deployer: deployerAddress, maxAttempts: 5000000, constructorArgs: args }),
-  });
-  const found = await response.json();
-  if (!response.ok || !found.found) throw new Error(JSON.stringify(found));
+  const dep = await ethers.getContractAt("TokenDeployer", deployerAddress);
+  const codeHash = await dep.initCodeHash(...args);
+  let found;
+  for (let i = 0; i < 5000000; i++) {
+    const salt = ethers.zeroPadValue(ethers.toBeHex(i), 32);
+    const hash = ethers.keccak256(ethers.solidityPacked(["bytes1", "address", "bytes32", "bytes32"], ["0xff", deployerAddress, salt, codeHash]));
+    const address = ethers.getAddress(`0x${hash.slice(26)}`);
+    if (address.toLowerCase().endsWith("bbbb")) { found = { found: true, salt, address, attempts: i + 1 }; break; }
+  }
+  if (!found) throw new Error("vanity not found");
   console.log("Predicted:", found.address, "salt:", found.salt, "attempts:", found.attempts);
 
   const abi = ethers.AbiCoder.defaultAbiCoder();
@@ -30,7 +33,6 @@ async function main() {
     ["address", "bytes32", "string", "string", "address"],
     [user.address, found.salt, name, symbol, wbnb]
   ));
-  const dep = await ethers.getContractAt("TokenDeployer", deployerAddress);
   await (await dep.commitSalt(commitment)).wait();
   const receipt = await (await fac.launchProjectDeterministic(
     name, symbol, user.address, user.address, ethers.ZeroAddress, found.salt, user.address
