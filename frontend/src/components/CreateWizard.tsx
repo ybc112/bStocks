@@ -8,8 +8,8 @@ import { CoinIcon, CopyBtn, Icon, Reveal, SectionHead, useI18n, useToast } from 
 import { useWallet } from "./Header";
 import { readOnlyProvider, txLink, addrLink } from "../web3";
 import {
-  FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, vanitySearch, verifySubmit, resolveFactoryAddress,
-  uploadAvatar, linkAvatar,
+  FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, searchVanityLocal, tokenInitCode, verifySubmit, resolveFactoryAddress,
+  uploadAvatarForToken,
 } from "../contracts";
 
 type W = {
@@ -33,9 +33,9 @@ const INIT: W = {
   pool: "BNB",
   mode: "public", durH: 48, wlAddrs: "",
   mintRate: 100000, minMint: 0.001, maxMint: 0.1, walletCap: 0.5,
-  capBNB: 10, poolPercent: 80, lpTokenRatio: 100, dev: "",
+  capBNB: 10, poolPercent: 50, lpTokenRatio: 100, dev: "",
   buy: 5, sell: 5, transfer: 1,
-  feeMkt: 300, feeBb: 250, feeLiq: 250, feeSelf: 100,
+  feeMkt: 300, feeBb: 200, feeLiq: 200, feeSelf: 100,
   mktOn: true, mktWallet: "",
   buybackOn: true,
   holderOn: true, holderToken: "USDT", holderMin: 100000, customCa: "",
@@ -102,7 +102,7 @@ export default function CreateWizard() {
   const canNext = step !== 0 || (w.name.trim() && w.sym.trim());
   const poolAsset = assetOf(w.pool);
   const feeTotal = (w.mktOn ? w.feeMkt : 0) + (w.buybackOn ? w.feeBb : 0) + w.feeLiq + w.feeSelf;
-  const feeOverflow = feeTotal > 900;
+  const feeOverflow = feeTotal !== 800;
   const wlCount = parseWl(w.wlAddrs).length;
 
   const validate = (): string | null => {
@@ -114,7 +114,7 @@ export default function CreateWizard() {
     if (w.holderToken === "custom" && !isAddress(w.customCa)) return `${t("wz_custom_ca")}: ${t("err_addr")}`;
     if (w.capBNB < 0.1) return `${t("wz_goal")}: >= 0.1 BNB`;
     if (feeOverflow) return t("wz_allocation_warn");
-    if (w.vanityOn && !/^[0-9a-fA-F]{4,8}$/.test(w.vanitySuffix)) return `${t("wz_vanity_suffix")}: 0-9 a-f x4-8`;
+    if (w.vanityOn && w.vanitySuffix.toLowerCase() !== "bbbb") return `${t("wz_vanity_suffix")}: bbbb`;
     return null;
   };
 
@@ -153,12 +153,10 @@ export default function CreateWizard() {
       let salt: string;
       let vanityAddr = "";
       setStage("vanity", { state: "run" });
+      const tokenInit = await tokenInitCode([w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase]);
+      const initCode = tokenInit.initCode;
       if (w.vanityOn) {
-        const codeHash = await new Contract(deployerAddr, DEPLOYER_ABI, readOnlyProvider()).initCodeHash(w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase) as string;
-        // Use the on-chain init-code hash as the single source of truth.
-        // 500k attempts keeps compatibility with older API connectors and
-        // gives a 99.95% success probability for a four-hex suffix.
-        const v = await vanitySearch(w.vanitySuffix, deployerAddr, undefined, 500000, codeHash);
+        const v = searchVanityLocal(deployerAddr, tokenInit.initCodeHash, w.vanitySuffix, 500000);
         if (!v.found || !v.salt) {
           setStage("vanity", { state: "err", info: v.message || "not found" });
           setErrMsg(t("err_vanity"));
@@ -175,13 +173,13 @@ export default function CreateWizard() {
 
       setStage("commit", { state: "run" });
       const predicted = vanityAddr || "";
-      const commitment = computeCommitment(addr!, salt, w.name, w.sym, resolvedBase);
+      const commitment = computeCommitment(addr!, salt, initCode);
       const deployer = new Contract(deployerAddr, DEPLOYER_ABI, signer);
       txs.push(await waitTx("commitSalt", deployer.commitSalt(commitment)));
       setStage("commit", { state: "ok", info: predicted || "committed" });
 
       setStage("deploy", { state: "run" });
-      const depTx = await factory.launchProjectDeterministic(w.name, w.sym, w.dev, marketing, base, salt, addr!);
+      const depTx = await factory.launchProjectDeterministic(initCode, w.name, w.sym, w.dev, marketing, base, salt, addr!);
       toast(`${t("wz_deploy")} · ${t("tx_sent")}`);
       const rc = await depTx.wait();
       txs.push(depTx.hash);
@@ -210,7 +208,13 @@ export default function CreateWizard() {
         duration
       )));
       txs.push(await waitTx("configTax", factory.configTax(tokenAddr, BigInt(Math.round(w.buy * 10)), BigInt(Math.round(w.sell * 10)), BigInt(Math.round(w.transfer * 10)))));
-      txs.push(await waitTx("configFeeSplit", factory.configFeeSplit(tokenAddr, BigInt(w.mktOn ? w.feeMkt : 0), BigInt(w.buybackOn ? w.feeBb : 0), BigInt(w.feeLiq))));
+      txs.push(await waitTx("configFeeDistribution", factory.configFeeDistribution(
+        tokenAddr,
+        BigInt(w.mktOn ? w.feeMkt : 0),
+        BigInt(w.buybackOn ? w.feeBb : 0),
+        BigInt(w.feeLiq),
+        BigInt(w.holderOn || w.lpOn || w.bdOn ? w.feeSelf : 0),
+      )));
 
       const rewardAddr = (o: string): string => {
         if (o === "BNB") return wbnb;
@@ -242,10 +246,12 @@ export default function CreateWizard() {
       if (avatarFile) {
         try {
           setAvatarUploading(true);
-          const url = await uploadAvatar(avatarFile);
-          await linkAvatar(tokenAddr, url);
+          await uploadAvatarForToken(tokenAddr, avatarFile);
           setAvatarUploading(false);
-        } catch { setAvatarUploading(false); }
+        } catch (e) {
+          setAvatarUploading(false);
+          toast(`头像上传失败: ${(e as Error).message}`, "warn");
+        }
       }
 
       setResult((r) => ({ ...r, txs }));
@@ -478,8 +484,8 @@ export default function CreateWizard() {
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
                     <div className="flex items-baseline justify-between"><Lbl>加池代币比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
-                    <input type="range" min={10} max={90} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">加池 {w.poolPercent}% · Mint 用户分配 {100 - w.poolPercent}% · 剩余 BNB 转给 Dev</p>
+                    <input type="range" min={50} max={50} step={1} value={w.poolPercent} readOnly className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">总代币固定拆分：50% 给全部 Mint 份额，50% 用于底池流动性</p>
                   </div>
                   <div>
                     <div className="flex items-baseline justify-between"><Lbl>LP 代币使用比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.lpTokenRatio}%</span></div>
@@ -513,7 +519,7 @@ export default function CreateWizard() {
                 <div className={`rounded-xl border p-4 ${feeOverflow ? "border-rosey/50 bg-rosey/6" : "border-line bg-panel2/60"}`}>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-bold text-snow">{t("wz_allocation")}</div>
-                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{(feeTotal / 9).toFixed(1)}% / 100%</span>
+                    <span className={`font-mono2 text-xs font-bold ${feeOverflow ? "text-rosey" : "text-gold2"}`}>{((feeTotal + 200) / 10).toFixed(1)}% / 100%</span>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     {([
@@ -523,13 +529,13 @@ export default function CreateWizard() {
                       { k: "feeSelf" as const, l: `${t("mech_holder")}·${t("opt_native")}`, on: w.holderOn && w.holderToken === "native" },
                     ]).map((x) => (
                       <div key={x.k} className={x.on ? "" : "opacity-40"}>
-                        <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 9).toFixed(1)}%</span></div>
+                        <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 10).toFixed(1)}%</span></div>
                         <input type="range" min={0} max={800} step={10} value={w[x.k]} onChange={(e) => set({ [x.k]: +e.target.value })} className="w-full" />
                       </div>
                     ))}
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
-                    {feeOverflow ? t("wz_allocation_warn") : "项目税收分配合计 100%，平台另从交易税中抽取 20%"}
+                    {feeOverflow ? "项目机制必须合计 80%，平台固定 20%" : "平台 20% + 项目机制 80% = 100%"}
                   </p>
                 </div>
               </div>
@@ -541,11 +547,11 @@ export default function CreateWizard() {
 
                 <Tgl on={w.mktOn} set={(v) => set({ mktOn: v })} icon="gift" label={t("mech_mkt")}>
                   <input className="field font-mono2" value={w.mktWallet} onChange={(e) => set({ mktWallet: e.target.value })} placeholder={`${t("wz_mkt_wallet")} 0x…`} />
-                  <p className="mt-1.5 text-[10.5px] text-fog">{t("wz_mkt_pct")} {w.feeMkt}/1000</p>
+                  <p className="mt-1.5 text-[10.5px] text-fog">{t("wz_mkt_pct")} {(w.feeMkt / 10).toFixed(1)}%</p>
                 </Tgl>
 
                 <Tgl on={w.buybackOn} set={(v) => set({ buybackOn: v })} icon="refresh" label={t("mech_buyback")}>
-                  <p className="text-[12px] leading-relaxed text-fog">{t("wz_buyback_pct")} {w.feeBb}/1000 — {t("wz_buyback_note")}</p>
+                  <p className="text-[12px] leading-relaxed text-fog">{t("wz_buyback_pct")} {(w.feeBb / 10).toFixed(1)}% — {t("wz_buyback_note")}</p>
                 </Tgl>
 
                 <Tgl on={w.holderOn} set={(v) => set({ holderOn: v, lpOn: v ? false : w.lpOn, bdOn: v ? false : w.bdOn })} icon="coins" label={t("mech_holder")}>
@@ -599,7 +605,7 @@ export default function CreateWizard() {
                       ["底池资产", `${poolAsset.sym} · ${poolAsset.name}`],
                       ["Mint → LP 比例", `${w.poolPercent}%`],
                       [`${t("wz_buy")} / ${t("wz_sell")} / ${t("wz_transfer")}`, `${w.buy}% / ${w.sell}% / ${w.transfer}%`],
-                      ["费用分配 /1000", `营销${w.mktOn ? w.feeMkt : 0} · 回购${w.buybackOn ? w.feeBb : 0} · 加池${w.feeLiq} · 本币分红${w.feeSelf}`],
+                      ["税收分配 100%", `平台20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 加池${w.feeLiq / 10}% · 分红${w.feeSelf / 10}%`],
                       [t("dt_mech_title"), [w.mktOn && `营销${w.feeMkt / 10}%`, w.buybackOn && `回购${w.feeBb / 10}%`, w.holderOn && `分红·${optLabel(w.holderToken)}`, w.lpOn && "加池分红", w.bdOn && "燃烧分红"].filter(Boolean).join(" · ") || "—"],
                     ].map(([k, v]) => (
                       <div key={k as string} className="flex items-baseline justify-between gap-4 border-b border-line/60 py-2">
@@ -646,7 +652,7 @@ export default function CreateWizard() {
                         ) : (
                           <Icon name="plus" size={18} className="text-fog" />
                         )}
-                        <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" className="hidden"
+                        <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden"
                           onChange={async (e) => {
                             const f = e.target.files?.[0];
                             if (!f) return;

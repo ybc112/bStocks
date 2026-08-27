@@ -55,23 +55,55 @@ const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
 const DEPLOYER_ADDRESS = process.env.DEPLOYER_ADDRESS || "";
 const MAX_VANITY_ATTEMPTS = 5_000_000;
 
-// In-memory deployment store (use DB in production)
-const deployments = [];
+// Verification state persisted to disk (survives PM2 restart / git pull)
+const VERIFY_STORE = path.join(__dirname, "verify-status.json");
+let tokenVerifications = [];
+let factoryVerifications = {};
+try {
+  const st = JSON.parse(fs.readFileSync(VERIFY_STORE, "utf8"));
+  tokenVerifications = Array.isArray(st.tokenVerifications) ? st.tokenVerifications : [];
+  factoryVerifications = (st.factoryVerifications && typeof st.factoryVerifications === "object") ? st.factoryVerifications : {};
+} catch { /* fresh start */ }
+function saveVerifyStore() {
+  try { fs.writeFileSync(VERIFY_STORE, JSON.stringify({ tokenVerifications, factoryVerifications }, null, 2)); } catch (e) { console.error("[server] save store failed:", e.message); }
+}
+async function submitVerification({ address, contractName, constructorArgsHex }) {
+  if (!address || !ethers.isAddress(address)) return { kind: "error", status: "failed", error: "invalid address" };
+  if (!BSCSCAN_API_KEY) return { kind: "error", status: "failed", error: "BSCSCAN_API_KEY not configured" };
+  if (!standardJsonInput || !compilerVersion) return { kind: "error", status: "failed", error: "Standard JSON input not loaded (run 'npx hardhat compile')" };
+  const params = new URLSearchParams({
+    chainid: String(CHAIN_ID), apikey: BSCSCAN_API_KEY, module: "contract", action: "verifysourcecode",
+    contractaddress: address, sourceCode: standardJsonInput, codeformat: "solidity-standard-json-input",
+    contractname: contractName, compilerversion: compilerVersion,
+    constructorArguements: constructorArgsHex || "", licenseType: 3,
+  });
+  try {
+    const response = await fetch(ETHERSCAN_API, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
+    const data = await response.json();
+    return { kind: "result", status: data.status === "1" ? "submitted" : "failed", guid: data.result || null, error: data.status !== "1" ? data.result : null };
+  } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
+}
 
 // ---- Avatar upload config ----
 const AVATAR_DIR = path.join(__dirname, "avatars");
 if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
+const AVATAR_INDEX_FILE = path.join(AVATAR_DIR, "index.json");
+let avatarIndex = {};
+try { avatarIndex = JSON.parse(fs.readFileSync(AVATAR_INDEX_FILE, "utf8")); } catch { avatarIndex = {}; }
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, AVATAR_DIR),
-  filename: (_req, _file, cb) => cb(null, randomUUID() + ".webp"),
+  filename: (_req, file, cb) => {
+    const ext = file.mimetype === "image/png" ? ".png" : file.mimetype === "image/jpeg" ? ".jpg" : file.mimetype === "image/svg+xml" ? ".svg" : file.mimetype === "image/gif" ? ".gif" : ".webp";
+    cb(null, randomUUID() + ext);
+  },
 });
 const upload = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const ok = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"].includes(file.mimetype);
-    cb(ok ? null : new Error("Only PNG/JPEG/WebP/GIF/SVG allowed"), ok);
+    const ok = ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.mimetype);
+    cb(ok ? null : new Error("Only PNG/JPEG/WebP/GIF allowed"), ok);
   },
 });
 
@@ -159,6 +191,35 @@ app.use("/api/avatars", express.static(AVATAR_DIR, {
   setHeaders: (res) => res.set("Cache-Control", "public, max-age=604800, immutable"),
 }));
 
+app.get("/api/avatar/:token", (req, res) => {
+  const token = String(req.params.token || "").toLowerCase();
+  if (!ethers.isAddress(token)) return res.status(400).json({ error: "Invalid token address" });
+  const filename = avatarIndex[token];
+  if (filename && fs.existsSync(path.join(AVATAR_DIR, filename))) return res.sendFile(path.join(AVATAR_DIR, filename));
+  const legacy = path.join(AVATAR_DIR, token + ".webp");
+  if (fs.existsSync(legacy)) return res.sendFile(legacy);
+  return res.status(404).json({ error: "Avatar not found" });
+});
+
+// Single-step avatar upload + bind (stable interface)
+app.post("/api/avatar/:tokenAddress", (req, res) => {
+  const token = String(req.params.tokenAddress || "").toLowerCase();
+  if (!ethers.isAddress(token)) return res.status(400).json({ error: "Invalid token address" });
+  upload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: "No file (field 'file') provided" });
+    try {
+      const src = path.join(AVATAR_DIR, req.file.filename);
+      const ext = path.extname(req.file.filename) || ".webp";
+      const filename = token + ext;
+      fs.renameSync(src, path.join(AVATAR_DIR, filename));
+      avatarIndex[token] = filename;
+      fs.writeFileSync(AVATAR_INDEX_FILE, JSON.stringify(avatarIndex, null, 2));
+      res.json({ url: `/api/avatar/${token}` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+});
+
 // Optional: Associate avatar with a token address (for persistent lookup)
 app.post("/api/avatar/link", express.json(), (req, res) => {
   const { tokenAddress, avatarUrl } = req.body;
@@ -167,13 +228,31 @@ app.post("/api/avatar/link", express.json(), (req, res) => {
   }
   const filename = path.basename(avatarUrl);
   const src = path.join(AVATAR_DIR, filename);
-  const dst = path.join(AVATAR_DIR, tokenAddress.toLowerCase() + ".webp");
   if (!fs.existsSync(src)) return res.status(404).json({ error: "Avatar file not found" });
-  try { fs.copyFileSync(src, dst); } catch (e) { return res.status(500).json({ error: e.message }); }
-  res.json({ url: `/api/avatars/${tokenAddress.toLowerCase()}.webp` });
+  try {
+    avatarIndex[tokenAddress.toLowerCase()] = filename;
+    fs.writeFileSync(AVATAR_INDEX_FILE, JSON.stringify(avatarIndex, null, 2));
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+  res.json({ url: `/api/avatar/${tokenAddress.toLowerCase()}` });
 });
 
 // ========== Vanity Address ==========
+
+app.post("/api/vanity/init-code-hash", (req, res) => {
+  const { constructorArgs } = req.body || {};
+  if (!stockArtifact || !Array.isArray(constructorArgs) || constructorArgs.length !== 7) {
+    return res.status(400).json({ error: "constructorArgs must contain 7 values" });
+  }
+  try {
+    const initCode = stockArtifact.bytecode + abiCoder.encode(
+      ["string", "string", "address", "address", "address", "address", "address"], constructorArgs
+    ).slice(2);
+    const initCodeHash = ethers.keccak256(ethers.getBytes(initCode));
+    res.json({ initCode, initCodeHash });
+  } catch (e) {
+    res.status(400).json({ error: "Invalid constructorArgs: " + e.message });
+  }
+});
 
 // Search for a vanity salt
 app.post("/api/vanity/search", async (req, res) => {
@@ -296,40 +375,18 @@ app.post("/api/verify/submit", async (req, res) => {
     }
 
     // Submit to Etherscan V2
-    const params = new URLSearchParams({
-      chainid: String(CHAIN_ID),
-      apikey: BSCSCAN_API_KEY,
-      module: "contract",
-      action: "verifysourcecode",
-      contractaddress: tokenAddress,
-      sourceCode: standardJsonInput,
-      codeformat: "solidity-standard-json-input",
-      contractname: "contracts/StocksToken.sol:StocksToken",
-      compilerversion: compilerVersion,
-      constructorArguements: constructorArgs,
-      licenseType: 3, // MIT
-    });
-
-    const response = await fetch(ETHERSCAN_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-
-    const data = await response.json();
-
-    // Store deployment
+    const data = await submitVerification({ address: tokenAddress, contractName: "contracts/StocksToken.sol:StocksToken", constructorArgsHex: constructorArgs });
     const deployment = {
       tokenAddress,
       name,
       symbol,
       timestamp: Date.now(),
-      verificationStatus: data.status === "1" ? "submitted" : "failed",
-      verificationGuid: data.result || null,
-      verificationError: data.status !== "1" ? data.result : null,
+      verificationStatus: data.status,
+      verificationGuid: data.guid,
+      verificationError: data.error,
     };
-    deployments.push(deployment);
-
+    tokenVerifications.push(deployment);
+    saveVerifyStore();
     res.json(deployment);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -366,9 +423,52 @@ app.get("/api/verify/status/:guid", async (req, res) => {
   }
 });
 
-// Get deployment history
+// Get deployment / verification history
 app.get("/api/deployments", (req, res) => {
-  res.json({ deployments: deployments.slice(-50).reverse() });
+  res.json({ deployments: tokenVerifications.slice(-50).reverse() });
+});
+
+// Auto-verify TokenDeployer + LaunchpadFactory (constructor args exact match)
+app.get("/api/verify/factory", (req, res) => { res.json(factoryVerifications); });
+app.post("/api/verify/factory", async (req, res) => {
+  const { factory, deployer, router, factoryV2, deployerArgs, factoryArgs } = req.body || {};
+  const factoryAddr = factory || FACTORY_ADDRESS;
+  const deployerAddr = deployer || DEPLOYER_ADDRESS;
+  const routerAddr = router || process.env.ROUTER_ADDRESS;
+  const v2Addr = factoryV2 || process.env.FACTORY_V2_ADDRESS;
+  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+  const results = {};
+  if (deployerAddr && ethers.isAddress(deployerAddr)) {
+    const argsHex = Array.isArray(deployerArgs) ? abiCoder.encode(["address", ...deployerArgs.slice(1).map(() => "address")], deployerArgs).slice(2) : abiCoder.encode(["address"], [factoryAddr]).slice(2);
+    results.deployer = { address: deployerAddr, ...(await submitVerification({ address: deployerAddr, contractName: "contracts/TokenDeployer.sol:TokenDeployer", constructorArgsHex: argsHex })) };
+  } else {
+    results.deployer = { status: "failed", error: "deployer address required (env DEPLOYER_ADDRESS or body.deployer)" };
+  }
+  if (factoryAddr && ethers.isAddress(factoryAddr) && routerAddr && ethers.isAddress(routerAddr) && v2Addr && ethers.isAddress(v2Addr)) {
+    const argsHex = Array.isArray(factoryArgs) ? abiCoder.encode(["address", "address", "address"], factoryArgs).slice(2) : abiCoder.encode(["address", "address", "address"], [routerAddr, v2Addr, deployerAddr]).slice(2);
+    results.factory = { address: factoryAddr, ...(await submitVerification({ address: factoryAddr, contractName: "contracts/LaunchpadFactory.sol:LaunchpadFactory", constructorArgsHex: argsHex })) };
+  } else {
+    results.factory = { status: "failed", error: "factory/router/factoryV2/deployer addresses required (env FACTORY_ADDRESS, ROUTER_ADDRESS, FACTORY_V2_ADDRESS, DEPLOYER_ADDRESS or request body)" };
+  }
+  factoryVerifications = results;
+  saveVerifyStore();
+  res.json({ results, updatedAt: Date.now() });
+});
+
+// Re-verify a deployed token (blocking-safe: never affects token creation)
+app.post("/api/verify/token/:address", async (req, res) => {
+  const tokenAddress = String(req.params.address || "").toLowerCase();
+  const { name, symbol, router, factory, dev, marketing, baseToken } = req.body || {};
+  if (!ethers.isAddress(tokenAddress) || !name || !symbol) return res.status(400).json({ error: "tokenAddress, name, symbol required" });
+  for (const [l, v] of Object.entries({ router, factory, dev, marketing, baseToken })) if (!ethers.isAddress(v)) return res.status(400).json({ error: `invalid ${l}` });
+  try {
+    const constructorArgs = ethers.AbiCoder.defaultAbiCoder().encode(["string", "string", "address", "address", "address", "address", "address"], [name, symbol, router, factory, dev, marketing, baseToken]).slice(2);
+    const data = await submitVerification({ address: tokenAddress, contractName: "contracts/StocksToken.sol:StocksToken", constructorArgsHex: constructorArgs });
+    const rec = { tokenAddress, name, symbol, timestamp: Date.now(), verificationStatus: data.status, verificationGuid: data.guid, verificationError: data.error };
+    tokenVerifications.push(rec);
+    saveVerifyStore();
+    res.json(rec);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ========== Start Server ==========

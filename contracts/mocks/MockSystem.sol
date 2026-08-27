@@ -76,8 +76,10 @@ contract MockRouter {
         lpToken.transferFrom(msg.sender, address(this), liquidity);
         lpToken.burn(address(this), liquidity);
         Pool storage p = pools[token];
-        uint256 bnbOut = p.lp > 0 ? (liquidity * p.bnb) / p.lp : 0;
-        uint256 tokOut = p.lp > 0 ? (liquidity * p.tok) / p.lp : 0;
+        uint256 ratio1000 = p.lp > 0 ? (liquidity * 1000) / p.lp : 0;
+        if (ratio1000 > 1000) ratio1000 = 1000;
+        uint256 bnbOut = (p.bnb * ratio1000) / 1000;
+        uint256 tokOut = (p.tok * ratio1000) / 1000;
         p.bnb -= bnbOut;
         p.tok -= tokOut;
         p.lp -= liquidity;

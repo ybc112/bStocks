@@ -288,7 +288,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
 
             <div className="mt-4 rounded-xl border border-line bg-panel/70 px-3.5 py-3">
               <div className="flex justify-between text-[11.5px] text-fog"><span>{t("dt_est")}</span></div>
-              <div className="font-mono2 mt-1 text-[15px] font-bold text-gold2">≈ {(amt * tk.rate).toLocaleString()} {tk.sym}</div>
+              <div className="font-mono2 mt-1 text-[15px] font-bold text-gold2">≈ {tk.goal > 0 ? ((5e29 * amt) / tk.goal).toExponential(6) : "0"} {tk.sym}</div>
               <div className="mt-2 border-t border-line pt-2">
                 <div className="mb-1 text-[10.5px] text-fog">{t("dt_split")} · {t("dt_rules")}: {t(`mode_${tk.mode}` as never)}</div>
                 <div className="flex h-2.5 overflow-hidden rounded-full">
@@ -297,7 +297,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
                 </div>
                 <div className="font-mono2 mt-1.5 flex justify-between text-[10px]">
                   <span className="text-gold2">{t("dt_to_lp")} {tk.poolRatio}%</span>
-                  <span className="text-fog">{t("dt_to_dev")} {100 - tk.poolRatio}%</span>
+                  <span className="text-fog">Mint 份额 50%</span>
                 </div>
               </div>
             </div>

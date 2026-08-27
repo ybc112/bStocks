@@ -1,6 +1,15 @@
 const hre = require("hardhat");
 const { ethers } = hre;
 
+async function initCodeOf(s, name, sym, dev, mkt, base) {
+  const resolved = base === 0 || base === 0n || base === '0x0000000000000000000000000000000000000000' ? s.wbnb : base;
+  const art = await hre.artifacts.readArtifact('StocksToken');
+  const enc = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['string', 'string', 'address', 'address', 'address', 'address', 'address'],
+    [name, sym, await s.mr.getAddress(), await s.mf.getAddress(), dev, mkt, resolved]
+  );
+  return art.bytecode + enc.slice(2);
+}
 async function main() {
   let pass = 0, fail = 0;
   const ok = (n) => { pass++; console.log("  PASS: " + n); };
@@ -30,14 +39,15 @@ async function main() {
   (await fac.platformTotalSupply()) === 10000n * 10n ** 18n ? ok("工厂部署 + 平台币 10000") : bad("平台币");
   (await fac.platformBalance(deployer.address)) === 10000n * 10n ** 18n ? ok("平台币归部署者") : bad("归属");
 
-  const tx = await fac.launchProject("BStock", "BST", dev.address, mkt.address, ethers.ZeroAddress);
+  const init = await initCodeOf({ mr, mf, wbnb }, "BStock", "BST", dev.address, mkt.address, 0);
+  const tx = await fac.launchProject(init, "BStock", "BST", dev.address, mkt.address, ethers.ZeroAddress);
   const r = await tx.wait();
   const tokenAddr = r.logs.find((l) => l.fragment && l.fragment.name === "ProjectLaunched").args.token;
   const token = await ethers.getContractAt("StocksToken", tokenAddr);
   (await token.decimals()) === 30n ? ok("代币 decimals = 30") : bad("精度");
   await mf.setPair(tokenAddr, wbnb, lp);
 
-  await (await fac.configMint(tokenAddr, false, RATE, 900, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(tokenAddr, false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
   ok("Mint 配置（cap 0.1 BNB = 门槛下限）");
 
   await (await token.connect(user).swapIn(E("0.05"), { value: E("0.05") })).wait();

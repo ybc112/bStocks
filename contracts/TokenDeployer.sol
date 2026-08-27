@@ -1,52 +1,37 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./StocksToken.sol";
+interface ITokenOwnable {
+    function transferOwnership(address newOwner) external;
+}
 
 contract TokenDeployer {
     error FactoryOnly();
     error CommitMismatch();
+    error CreateFailed();
 
     address private immutable factory;
+    mapping(bytes32 => address) private saltCommitter;
 
     constructor(address _factory) {
         factory = _factory;
     }
 
-    // Commit-reveal to prevent salt frontrunning
-    mapping(bytes32 => address) private saltCommitter;
-
-
     function commitSalt(bytes32 commitment) external {
         saltCommitter[commitment] = msg.sender;
     }
 
-    function initCodeHash(string calldata name, string calldata symbol, address router, address _factory, address dev, address marketing, address baseToken) external pure returns (bytes32) {
-        return keccak256(abi.encodePacked(type(StocksToken).creationCode, abi.encode(name, symbol, router, _factory, dev, marketing, baseToken)));
-    }
-
-    function revealAndDeploy(
-        string calldata name,
-        string calldata symbol,
-        address router,
-        address _factory,
-        address dev,
-        address marketing,
-        address baseToken,
-        bytes32 salt,
-        address user
-    ) external returns (address) {
+    function revealAndDeploy(bytes calldata initCode, bytes32 salt, address user) external returns (address token) {
         if (msg.sender != factory) revert FactoryOnly();
-        bytes32 commitment = keccak256(abi.encode(user, salt, name, symbol, baseToken));
+        bytes32 commitment = keccak256(abi.encode(user, salt, initCode));
         if (saltCommitter[commitment] != user) revert CommitMismatch();
         delete saltCommitter[commitment];
-        address token = _create(name, symbol, router, _factory, dev, marketing, baseToken, salt);
-        // Configure the factory while the deployer is still token owner.
-        return token;
-    }
 
-    function _create(string calldata name, string calldata symbol, address router, address _factory, address dev, address marketing, address baseToken, bytes32 salt) internal returns (address token) {
-        token = address(new StocksToken{salt: salt}(name, symbol, router, _factory, dev, marketing, baseToken));
-        StocksToken(payable(token)).transferOwnership(msg.sender);
+        bytes memory code = initCode;
+        assembly {
+            token := create2(0, add(code, 0x20), mload(code), salt)
+        }
+        if (token == address(0)) revert CreateFailed();
+        ITokenOwnable(token).transferOwnership(msg.sender);
     }
 }

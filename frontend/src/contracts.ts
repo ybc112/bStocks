@@ -1,4 +1,4 @@
-import { Contract, Interface, formatUnits, id, keccak256, AbiCoder } from "ethers";
+import { Contract, Interface, formatUnits, id, keccak256, AbiCoder, solidityPacked } from "ethers";
 import type { JsonRpcProvider, BrowserProvider } from "ethers";
 import { readOnlyProvider } from "./web3";
 import { POOL_ASSETS } from "./data";
@@ -43,10 +43,10 @@ export const FACTORY_ABI = [
   "function registered(address) view returns (bool)",
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
-  "function launchProjectDeterministic(string,string,address,address,address,bytes32,address) returns (address)",
+  "function launchProjectDeterministic(bytes,string,string,address,address,address,bytes32,address) returns (address)",
   "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
-  "function configFeeSplit(address,uint256,uint256,uint256)",
+  "function configFeeDistribution(address,uint256,uint256,uint256,uint256)",
   "function configDiv(address,uint8,address,uint256,bool)",
   "function configWhitelist(address,address[],bool)",
   "function register(address)",
@@ -55,7 +55,20 @@ export const FACTORY_ABI = [
   "event ProjectLaunched2(address indexed token, address indexed dev, address indexed baseToken, bytes32 salt, bool deterministic, string name, string symbol)",
 ];
 
-export const DEPLOYER_ABI = ["function commitSalt(bytes32)", "function initCodeHash(string,string,address,address,address,address,address) view returns (bytes32)"];
+export const DEPLOYER_ABI = ["function commitSalt(bytes32)"];
+
+export type InitCode = { initCode: string; initCodeHash: string };
+
+export async function tokenInitCode(args: [string, string, string, string, string, string, string]): Promise<InitCode> {
+  const r = await fetch(`${API_BASE}/api/vanity/init-code-hash`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ constructorArgs: args }),
+  });
+  const j = await r.json().catch(() => ({})) as Partial<InitCode> & { error?: string };
+  if (!r.ok || !j.initCode || !j.initCodeHash) throw new Error(j.error || `init code api ${r.status}`);
+  return { initCode: j.initCode, initCodeHash: j.initCodeHash };
+}
 
 export const TOKEN_ABI = [
   "function name() view returns (string)",
@@ -81,6 +94,7 @@ export const TOKEN_ABI = [
   "function marketingShare() view returns (uint256)",
   "function buyBackShare() view returns (uint256)",
   "function liquidityShare() view returns (uint256)",
+  "function selfDivShare() view returns (uint256)",
   "function divInfo(uint8) view returns (bool enabled, address rewardToken, uint256 minEligible, uint256 accPerShare, uint256 totalShares, uint256 pendingReward)",
   "function swapIn(uint256 bnbAmount) payable",
 ];
@@ -101,10 +115,10 @@ export function tokenContract(addr: string, provider: JsonRpcProvider | BrowserP
 }
 
 /* ---------------- commit-reveal helper (matches contract abi.encode) ---------------- */
-export function computeCommitment(user: string, salt: string, name: string, symbol: string, baseToken: string): string {
+export function computeCommitment(user: string, salt: string, initCode: string): string {
   return keccak256(AbiCoder.defaultAbiCoder().encode(
-    ["address", "bytes32", "string", "string", "address"],
-    [user, salt, name, symbol, baseToken]
+    ["address", "bytes32", "bytes"],
+    [user, salt, initCode]
   ));
 }
 
@@ -122,6 +136,17 @@ export async function vanitySearch(suffix: string, deployer: string, constructor
     throw new Error(j.error || `vanity api ${r.status}`);
   }
   return (await r.json()) as VanityResult;
+}
+
+export function searchVanityLocal(deployer: string, initCodeHash: string, suffix: string, maxAttempts = 500000): VanityResult {
+  const target = suffix.toLowerCase();
+  for (let i = 0; i < maxAttempts; i++) {
+    const salt = `0x${i.toString(16).padStart(64, "0")}`;
+    const hash = keccak256(solidityPacked(["bytes1", "address", "bytes32", "bytes32"], ["0xff", deployer, salt, initCodeHash]));
+    const address = `0x${hash.slice(-40)}`;
+    if (address.toLowerCase().endsWith(target)) return { found: true, salt, address, attempts: i + 1, elapsed: "local" };
+  }
+  return { found: false, attempts: maxAttempts, message: `No address ending with ${suffix}` };
 }
 
 export type VerifyResult = { tokenAddress: string; verificationStatus: string; verificationGuid: string | null; verificationError?: string | null; error?: string };
@@ -167,7 +192,16 @@ export async function linkAvatar(tokenAddress: string, avatarUrl: string): Promi
 }
 
 export function avatarUrl(tokenAddress: string): string {
-  return `${API_BASE}/api/avatars/${tokenAddress.toLowerCase()}.webp`;
+  return `${API_BASE}/api/avatar/${tokenAddress.toLowerCase()}?v=2`;
+}
+
+export async function uploadAvatarForToken(tokenAddress: string, file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(`${API_BASE}/api/avatar/${tokenAddress.toLowerCase()}`, { method: "POST", body: fd });
+  const j = await r.json().catch(() => ({})) as { url?: string; error?: string };
+  if (!r.ok || !j.url) throw new Error(j.error || `upload avatar api ${r.status}`);
+  return j.url;
 }
 
 /* ---------------- multicall (Multicall3 on BSC) ---------------- */

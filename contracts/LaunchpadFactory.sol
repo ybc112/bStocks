@@ -112,15 +112,20 @@ contract LaunchpadFactory {
 
     function setDeployer(address d) external onlyOwner { deployer = TokenDeployer(d); }
 
-    function launchProject(string calldata _name, string calldata _symbol, address _dev, address _marketing, address _baseToken) external returns (address) {
+    function launchProject(
+        bytes calldata initCode,
+        string calldata _name,
+        string calldata _symbol,
+        address _dev,
+        address _marketing,
+        address _baseToken
+    ) external returns (address) {
         address base = _baseToken == address(0) ? WBNB : _baseToken;
         require(baseTokenWhitelist[base], "BASE");
-        // Keep StocksToken creation in TokenDeployer so this factory stays
-        // below the EVM 24KB contract-size limit.
         bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, _name, _symbol, block.number, block.prevrandao));
-        bytes32 commitment = keccak256(abi.encode(address(this), salt, _name, _symbol, base));
+        bytes32 commitment = keccak256(abi.encode(address(this), salt, initCode));
         deployer.commitSalt(commitment);
-        address tokenAddr = deployer.revealAndDeploy(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt, address(this));
+        address tokenAddr = deployer.revealAndDeploy(initCode, salt, address(this));
         StocksToken t = StocksToken(payable(tokenAddr));
         t.acceptOwnership();
         t.setLaunchpad(address(this));
@@ -132,6 +137,7 @@ contract LaunchpadFactory {
     }
 
     function launchProjectDeterministic(
+        bytes calldata initCode,
         string calldata _name,
         string calldata _symbol,
         address _dev,
@@ -142,7 +148,8 @@ contract LaunchpadFactory {
     ) external returns (address) {
         address base = _baseToken == address(0) ? WBNB : _baseToken;
         require(baseTokenWhitelist[base], "BASE");
-        address tokenAddr = deployer.revealAndDeploy(_name, _symbol, address(router), factoryERC20, _dev, _marketing, base, salt, user);
+        address tokenAddr = deployer.revealAndDeploy(initCode, salt, user);
+        require(uint16(uint160(tokenAddr)) == 0xbbbb, "VANITY");
         StocksToken t = StocksToken(payable(tokenAddr));
         t.acceptOwnership();
         t.setLaunchpad(address(this));
@@ -163,7 +170,7 @@ contract LaunchpadFactory {
         _token(t).setMintConfig(wl, rate, poolPct, lpRatio, minM, maxM, wCap, cap, duration);
     }
     function configTax(address t, uint256 b, uint256 s, uint256 tr) external onlyProjectOwner(t) { _token(t).setTax(b, s, tr); }
-    function configFeeSplit(address t, uint256 m, uint256 bb, uint256 l) external onlyProjectOwner(t) { _token(t).setFeeSplit(m, bb, l); }
+    function configFeeDistribution(address t, uint256 m, uint256 bb, uint256 l, uint256 d) external onlyProjectOwner(t) { _token(t).setFeeDistribution(m, bb, l, d); }
     function configExclude(address t, address a, bool f) external onlyOwner { _token(t).setExcluded(a, f); }
     function configWhitelist(address t, address[] calldata addrs, bool f) external onlyProjectOwner(t) { _token(t).setWhitelist(addrs, f); }
     function configDiv(address t, uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyProjectOwner(t) { _token(t).enableDiv(id, rewardToken, minEligible, f); }
