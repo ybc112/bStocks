@@ -1,8 +1,7 @@
 const hre = require("hardhat");
 const { ethers } = hre;
 
-const FACTORY = "0xE519DB58FF334AA3f83a7Fb7B584279BBecd9993";
-const API = "https://bstocks-api.kimi-vault.com";
+const FACTORY = process.env.FACTORY_ADDRESS || "0xCfd307a259181103Bf6A86Db8D4aaF48882eAAc1";
 
 async function main() {
   const [user] = await ethers.getSigners();
@@ -14,28 +13,30 @@ async function main() {
   const nonce = Date.now().toString().slice(-8);
   const name = `Vanity Proof ${nonce}`;
   const symbol = `VP${nonce.slice(-4)}`;
-  const args = [name, symbol, router, pancakeFactory, user.address, user.address, wbnb];
+  const artifact = await hre.artifacts.readArtifact("StocksToken");
+  const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["string", "string", "address", "address", "address", "address", "address"],
+    [name, symbol, router, pancakeFactory, user.address, user.address, wbnb]
+  );
+  const initCode = artifact.bytecode + encoded.slice(2);
+  const initCodeHash = ethers.keccak256(initCode);
 
-  const dep = await ethers.getContractAt("TokenDeployer", deployerAddress);
-  const codeHash = await dep.initCodeHash(...args);
   let found;
-  for (let i = 0; i < 5000000; i++) {
+  for (let i = 0; i < 5_000_000; i++) {
     const salt = ethers.zeroPadValue(ethers.toBeHex(i), 32);
-    const hash = ethers.keccak256(ethers.solidityPacked(["bytes1", "address", "bytes32", "bytes32"], ["0xff", deployerAddress, salt, codeHash]));
-    const address = ethers.getAddress(`0x${hash.slice(26)}`);
-    if (address.toLowerCase().endsWith("bbbb")) { found = { found: true, salt, address, attempts: i + 1 }; break; }
+    const address = ethers.getCreate2Address(deployerAddress, salt, initCodeHash);
+    if (address.toLowerCase().endsWith("bbbb")) { found = { salt, address, attempts: i + 1 }; break; }
   }
   if (!found) throw new Error("vanity not found");
-  console.log("Predicted:", found.address, "salt:", found.salt, "attempts:", found.attempts);
+  console.log("Predicted:", found.address, "attempts:", found.attempts);
 
-  const abi = ethers.AbiCoder.defaultAbiCoder();
-  const commitment = ethers.keccak256(abi.encode(
-    ["address", "bytes32", "string", "string", "address"],
-    [user.address, found.salt, name, symbol, wbnb]
+  const commitment = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["address", "bytes32", "bytes"], [user.address, found.salt, initCode]
   ));
+  const dep = await ethers.getContractAt("TokenDeployer", deployerAddress);
   await (await dep.commitSalt(commitment)).wait();
   const receipt = await (await fac.launchProjectDeterministic(
-    name, symbol, user.address, user.address, ethers.ZeroAddress, found.salt, user.address
+    initCode, name, symbol, user.address, user.address, ethers.ZeroAddress, found.salt, user.address
   )).wait();
 
   let actual = "";
@@ -46,12 +47,15 @@ async function main() {
     } catch {}
   }
   if (!actual) throw new Error("ProjectLaunched2 missing");
+  const token = await ethers.getContractAt("StocksToken", actual);
   console.log("Actual   :", actual);
   console.log("Matches  :", actual.toLowerCase() === found.address.toLowerCase());
   console.log("Ends bbbb:", actual.toLowerCase().endsWith("bbbb"));
-  if (actual.toLowerCase() !== found.address.toLowerCase() || !actual.toLowerCase().endsWith("bbbb")) {
-    throw new Error("VANITY_MISMATCH");
-  }
+  console.log("Supply   :", (await token.totalSupply()).toString());
+  console.log("Decimals :", (await token.decimals()).toString());
+  console.log("Registered:", await fac.isProject(actual));
+  if (actual.toLowerCase() !== found.address.toLowerCase() || !actual.toLowerCase().endsWith("bbbb")) throw new Error("VANITY_MISMATCH");
+  if ((await token.totalSupply()) !== 10n ** 30n || (await token.decimals()) !== 0n) throw new Error("SUPPLY_MISMATCH");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });
