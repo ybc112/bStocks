@@ -75,10 +75,10 @@ async function submitVerification({ address, contractName, constructorArgsHex })
     chainid: String(CHAIN_ID), apikey: BSCSCAN_API_KEY, module: "contract", action: "verifysourcecode",
     contractaddress: address, sourceCode: standardJsonInput, codeformat: "solidity-standard-json-input",
     contractname: contractName, compilerversion: compilerVersion,
-    constructorArguements: constructorArgsHex || "", licenseType: 3,
+    constructorArguments: constructorArgsHex || "", licenseType: 3,
   });
   try {
-    const response = await fetch(ETHERSCAN_API, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
+    const response = await fetch(`${ETHERSCAN_API}?chainid=${encodeURIComponent(String(CHAIN_ID))}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
     const data = await response.json();
     return { kind: "result", status: data.status === "1" ? "submitted" : "failed", guid: data.result || null, error: data.status !== "1" ? data.result : null };
   } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
