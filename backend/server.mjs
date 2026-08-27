@@ -439,7 +439,10 @@ app.post("/api/verify/factory", async (req, res) => {
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   const results = {};
   if (deployerAddr && ethers.isAddress(deployerAddr)) {
-    const argsHex = Array.isArray(deployerArgs) ? abiCoder.encode(["address", ...deployerArgs.slice(1).map(() => "address")], deployerArgs).slice(2) : abiCoder.encode(["address"], [factoryAddr]).slice(2);
+    const creationCode = stockArtifact?.bytecode ? ethers.getBytes(stockArtifact.bytecode) : null;
+    const defaultArgs = creationCode ? [factoryAddr, ethers.keccak256(creationCode), creationCode.length] : null;
+    const args = Array.isArray(deployerArgs) ? deployerArgs : defaultArgs;
+    const argsHex = args ? abiCoder.encode(["address", "bytes32", "uint256"], args).slice(2) : "";
     results.deployer = { address: deployerAddr, ...(await submitVerification({ address: deployerAddr, contractName: "contracts/TokenDeployer.sol:TokenDeployer", constructorArgsHex: argsHex })) };
   } else {
     results.deployer = { status: "failed", error: "deployer address required (env DEPLOYER_ADDRESS or body.deployer)" };

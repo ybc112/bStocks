@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Contract, ZeroAddress, isAddress, parseEther, randomBytes, hexlify } from "ethers";
+import { Contract, ZeroAddress, isAddress, parseEther, parseUnits, randomBytes, hexlify } from "ethers";
 import type { ContractTransactionResponse } from "ethers";
 import { POOL_ASSETS, assetOf } from "../data";
 import type { MintMode } from "../data";
@@ -17,7 +17,7 @@ type W = {
   pool: string;
   mode: MintMode; durH: number; wlAddrs: string;
   mintRate: number; minMint: number; maxMint: number; walletCap: number;
-  capBNB: number; poolPercent: number; lpTokenRatio: number; dev: string;
+  capBNB: number; poolPercent: number; dev: string;
   buy: number; sell: number; transfer: number;
   feeMkt: number; feeBb: number; feeLiq: number; feeSelf: number;
   mktOn: boolean; mktWallet: string;
@@ -33,7 +33,7 @@ const INIT: W = {
   pool: "BNB",
   mode: "public", durH: 48, wlAddrs: "",
   mintRate: 100000, minMint: 0.001, maxMint: 0.1, walletCap: 0.5,
-  capBNB: 10, poolPercent: 50, lpTokenRatio: 100, dev: "",
+  capBNB: 10, poolPercent: 50, dev: "",
   buy: 5, sell: 5, transfer: 1,
   feeMkt: 300, feeBb: 200, feeLiq: 200, feeSelf: 100,
   mktOn: true, mktWallet: "",
@@ -200,7 +200,7 @@ export default function CreateWizard() {
         w.mode === "wl",
         BigInt(Math.round(w.mintRate)),
         BigInt(Math.round(w.poolPercent * 10)),
-        BigInt(Math.round(w.lpTokenRatio * 10)),
+        1000n,
         parseEther(String(w.minMint)),
         parseEther(String(w.maxMint)),
         parseEther(String(w.walletCap)),
@@ -223,10 +223,10 @@ export default function CreateWizard() {
         return w.customCa;
       };
       if (w.holderOn) {
-        txs.push(await waitTx("configDiv(HOLD)", factory.configDiv(tokenAddr, 1, rewardAddr(w.holderToken), parseEther(String(w.holderMin)), true)));
+        txs.push(await waitTx("configDiv(HOLD)", factory.configDiv(tokenAddr, 1, rewardAddr(w.holderToken), parseUnits(String(w.holderMin), 0), true)));
       }
       if (w.lpOn) {
-        txs.push(await waitTx("configDiv(LIQ)", factory.configDiv(tokenAddr, 2, rewardAddr(w.lpToken), parseEther(String(w.lpMin)), true)));
+        txs.push(await waitTx("configDiv(LIQ)", factory.configDiv(tokenAddr, 2, rewardAddr(w.lpToken), parseUnits(String(w.lpMin), 0), true)));
       }
       if (w.bdOn) {
         txs.push(await waitTx("configDiv(BURN)", factory.configDiv(tokenAddr, 3, rewardAddr(w.holderToken), 0n, true)));
@@ -481,17 +481,10 @@ export default function CreateWizard() {
                   </div>
                 </div>
 
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <div>
-                    <div className="flex items-baseline justify-between"><Lbl>加池代币比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
-                    <input type="range" min={50} max={50} step={1} value={w.poolPercent} readOnly className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">总代币固定拆分：50% 给全部 Mint 份额，50% 用于底池流动性</p>
-                  </div>
-                  <div>
-                    <div className="flex items-baseline justify-between"><Lbl>LP 代币使用比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.lpTokenRatio}%</span></div>
-                    <input type="range" min={10} max={100} step={1} value={w.lpTokenRatio} onChange={(e) => set({ lpTokenRatio: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">100% = 完整使用 LP 储备，50% = 使用一半</p>
-                  </div>
+                <div>
+                    <div className="flex items-baseline justify-between"><Lbl>BNB 加池比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
+                    <input type="range" min={10} max={100} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">Mint 代币份额固定 50% · 底池代币份额固定 50% · Mint BNB 进入底池 {w.poolPercent}% · 转 Dev {(100 - w.poolPercent)}%</p>
                 </div>
 
                 <div><Lbl>{t("wz_dev")}</Lbl><input className="field font-mono2" value={w.dev} onChange={(e) => set({ dev: e.target.value })} placeholder={t("wz_dev_ph")} /></div>
@@ -596,14 +589,14 @@ export default function CreateWizard() {
                   <div className="grid gap-x-6 gap-y-2.5 text-[13px] sm:grid-cols-2">
                     {[
                       [t("wz_name"), `${w.name} ($${w.sym})`],
-                      [t("wz_supply"), "10^30 raw · 30 decimals"],
+                      [t("wz_supply"), "1,000,000,000,000,000,000,000,000,000,000 枚 · 0 decimals"],
                       ["毕业目标", `${w.capBNB} BNB`],
                       ["Mint 兑换率", `1 BNB = ${w.mintRate.toLocaleString()} 枚`],
                       ["单笔范围", `${w.minMint} - ${w.maxMint} BNB`],
                       ["每钱包上限", w.walletCap > 0 ? `${w.walletCap} BNB` : "不限制"],
                       ["Mint 模式", t(`mode_${w.mode}` as never) + (w.mode === "time" ? ` · ${w.durH}h` : w.mode === "wl" ? ` · ${wlCount} addr` : "")],
                       ["底池资产", `${poolAsset.sym} · ${poolAsset.name}`],
-                      ["Mint → LP 比例", `${w.poolPercent}%`],
+                      ["BNB 加池 / Dev", `${w.poolPercent}% / ${100 - w.poolPercent}%`],
                       [`${t("wz_buy")} / ${t("wz_sell")} / ${t("wz_transfer")}`, `${w.buy}% / ${w.sell}% / ${w.transfer}%`],
                       ["税收分配 100%", `平台20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 加池${w.feeLiq / 10}% · 分红${w.feeSelf / 10}%`],
                       [t("dt_mech_title"), [w.mktOn && `营销${w.feeMkt / 10}%`, w.buybackOn && `回购${w.feeBb / 10}%`, w.holderOn && `分红·${optLabel(w.holderToken)}`, w.lpOn && "加池分红", w.bdOn && "燃烧分红"].filter(Boolean).join(" · ") || "—"],

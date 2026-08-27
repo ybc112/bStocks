@@ -93,8 +93,8 @@ export const TOKEN_ABI = [
   "function mintEnd() view returns (uint256)",
   "function marketingShare() view returns (uint256)",
   "function buyBackShare() view returns (uint256)",
-  "function liquidityShare() view returns (uint256)",
-  "function selfDivShare() view returns (uint256)",
+  "function liquidityBackflowShare() view returns (uint256)",
+  "function dividendShare() view returns (uint256)",
   "function divInfo(uint8) view returns (bool enabled, address rewardToken, uint256 minEligible, uint256 accPerShare, uint256 totalShares, uint256 pendingReward)",
   "function swapIn(uint256 bnbAmount) payable",
 ];
@@ -335,7 +335,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
       { fn: "poolPercent", key: "poolPercent" }, { fn: "buyTax", key: "buyTax" }, { fn: "sellTax", key: "sellTax" },
       { fn: "transferTax", key: "transferTax" }, { fn: "baseToken", key: "baseToken" }, { fn: "pair", key: "pair" },
       { fn: "devWallet", key: "devWallet" }, { fn: "refundDeadline", key: "refundDeadline" },
-      { fn: "marketingShare", key: "marketingShare" }, { fn: "buyBackShare", key: "buyBackShare" }, { fn: "liquidityShare", key: "liquidityShare" },
+      { fn: "marketingShare", key: "marketingShare" }, { fn: "buyBackShare", key: "buyBackShare" }, { fn: "liquidityBackflowShare", key: "liquidityBackflowShare" },
       { fn: "divInfo", key: "div1", args: [1] }, { fn: "divInfo", key: "div3", args: [3] },
     ];
     const F = fields.length;
@@ -390,7 +390,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         const baseReserve = isToken0 ? stats.r1 : stats.r0;
         if (tokenReserve > 0n) {
           price = Number(formatUnits((baseReserve * 10n ** 18n) / tokenReserve, 18));
-          mcap = price * Number(formatUnits((g("totalSupply") as bigint) ?? 0n, 18));
+          mcap = price * Number((g("totalSupply") as bigint) ?? 0n);
         }
       }
 
@@ -441,7 +441,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
           mkt: Number((g("marketingShare") as bigint) ?? 0n) / 10,
           holder: div1 && (div1[0] as boolean) ? rewardLabel(div1) : "—",
           buyback: Number((g("buyBackShare") as bigint) ?? 0n) / 10,
-          lp: Number((g("liquidityShare") as bigint) ?? 0n) / 10,
+          lp: Number((g("liquidityBackflowShare") as bigint) ?? 0n) / 10,
           burndiv: (div3?.[0] as boolean) ?? false,
         },
         spark: [],

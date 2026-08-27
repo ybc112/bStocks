@@ -34,7 +34,9 @@ async function main() {
   console.log("LaunchpadFactory:", facAddr);
 
   const Deployer = await hre.ethers.getContractFactory("TokenDeployer");
-  const dep = await Deployer.deploy(facAddr);
+  const tokenArtifact = await hre.artifacts.readArtifact("StocksToken");
+  const creationCode = hre.ethers.getBytes(tokenArtifact.bytecode);
+  const dep = await Deployer.deploy(facAddr, hre.ethers.keccak256(creationCode), creationCode.length);
   await dep.waitForDeployment();
   console.log("TokenDeployer:", await dep.getAddress());
 

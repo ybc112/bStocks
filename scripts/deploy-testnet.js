@@ -42,7 +42,10 @@ async function main() {
 
   // Step 2: TokenDeployer owned by factory
   const Deployer = await hre.ethers.getContractFactory("TokenDeployer");
-  const dep = await Deployer.deploy(facAddr);
+  const tokenArtifact = await hre.artifacts.readArtifact("StocksToken");
+  const creationCode = hre.ethers.getBytes(tokenArtifact.bytecode);
+  const creationCodeHash = hre.ethers.keccak256(creationCode);
+  const dep = await Deployer.deploy(facAddr, creationCodeHash, creationCode.length);
   await dep.waitForDeployment();
   const depAddr = await dep.getAddress();
   console.log("TokenDeployer:", depAddr);
@@ -67,7 +70,7 @@ async function main() {
     console.log("\nVerifying on BscScan testnet...");
     for (const [name, addr, args] of [
       ["LaunchpadFactory", facAddr, [TESTNET_ROUTER, TESTNET_FACTORY, hre.ethers.ZeroAddress]],
-      ["TokenDeployer", depAddr, [facAddr]],
+      ["TokenDeployer", depAddr, [facAddr, creationCodeHash, creationCode.length]],
     ]) {
       try {
         await hre.run("verify:verify", { address: addr, constructorArguments: args });

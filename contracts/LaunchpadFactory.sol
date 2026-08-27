@@ -127,6 +127,9 @@ contract LaunchpadFactory {
         deployer.commitSalt(commitment);
         address tokenAddr = deployer.revealAndDeploy(initCode, salt, address(this));
         StocksToken t = StocksToken(payable(tokenAddr));
+        require(keccak256(bytes(t.name())) == keccak256(bytes(_name)) && keccak256(bytes(t.symbol())) == keccak256(bytes(_symbol)), "META");
+        require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
+        require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
         t.acceptOwnership();
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
@@ -151,6 +154,9 @@ contract LaunchpadFactory {
         address tokenAddr = deployer.revealAndDeploy(initCode, salt, user);
         require(uint16(uint160(tokenAddr)) == 0xbbbb, "VANITY");
         StocksToken t = StocksToken(payable(tokenAddr));
+        require(keccak256(bytes(t.name())) == keccak256(bytes(_name)) && keccak256(bytes(t.symbol())) == keccak256(bytes(_symbol)), "META");
+        require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
+        require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
         t.acceptOwnership();
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);

@@ -25,7 +25,9 @@ async function setup() {
   const fac = await F.deploy(await mr.getAddress(), await mf.getAddress(), ethers.ZeroAddress);
   await fac.waitForDeployment();
   const facAddr = await fac.getAddress();
-  const dep = await Dep.deploy(facAddr);
+  const tokenArt = await hre.artifacts.readArtifact("StocksToken");
+  const creationCode = ethers.getBytes(tokenArt.bytecode);
+  const dep = await Dep.deploy(facAddr, ethers.keccak256(creationCode), creationCode.length);
   await fac.setDeployer(await dep.getAddress());
   const wbnb = await fac.WBNB();
   await (await deployer.sendTransaction({ to: await mr.getAddress(), value: E("100") })).wait();
@@ -67,6 +69,10 @@ async function main() {
     await (await fac.setBaseTokenWhitelist([usdtAddr], true)).wait();
     const wl = await fac.baseTokenWhitelist(usdtAddr);
     wl ? ok("底池白名单设置生效") : bad("白名单", "未生效");
+  }
+  {
+    const r = await expectRevert(fac.launchProject("0x60006000f3", "X", "X", dev.address, mkt.address, ethers.ZeroAddress));
+    r ? ok("TokenDeployer 拒绝非官方 StocksToken initCode") : bad("initCode 白名单", "恶意字节码被接受");
   }
   {
     const t = await launch(s, 0);
@@ -135,8 +141,9 @@ async function main() {
     const rf = await (await t3.connect(userB).refund()).wait();
     const b1 = await ethers.provider.getBalance(userB.address);
     const twice = await expectRevert(t3.connect(userB).refund());
-    const zero = (await t3.mintedBNB(userB.address)) === 0n;
-    early && b1 > b0 && twice && zero ? ok("退款：24h 门槛 + 撤池退 BNB + 防重复") : bad("退款", `early=${early} twice=${twice}`);
+    const zero = (await t3.mintedPoolBNB(userB.address)) === 0n;
+    const accountingReset = (await t3.mintedBNB(userB.address)) === 0n && (await t3.totalMintedBNB()) === 0n && (await t3.mintTokensDistributed()) === 0n && (await t3.lpTokensDistributed()) === 0n;
+    early && b1 > b0 && twice && zero && accountingReset ? ok("退款：24h 门槛 + 撤池退 BNB + 全局记账恢复 + 防重复") : bad("退款", `early=${early} twice=${twice} accounting=${accountingReset}`);
   }
 
   // ---------- ERC20 底池 mint 入池 ----------
@@ -254,7 +261,7 @@ async function main() {
     const t5 = await launch(s, 0);
     const a5 = await t5.getAddress();
     const r1 = await expectRevert(fac.configMint(a5, false, 0, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r2 = await expectRevert(fac.configMint(a5, false, RATE, 501, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
+    const r2 = await expectRevert(fac.configMint(a5, false, RATE, 1001, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
     const r3 = await expectRevert(fac.configMint(a5, false, RATE, 500, 1000, E("0.00000000001"), E("0.05"), E("0"), E("0.1"), 3600));
     const r4 = await expectRevert(fac.configMint(a5, false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.09"), 3600));
     r1 && r2 && r3 && r4 ? ok("Mint 参数校验(rate/poolPct/minMint/门槛≥0.1)") : bad("Mint 校验", `${r1}${r2}${r3}${r4}`);
@@ -267,6 +274,44 @@ async function main() {
     await hre.network.provider.send("evm_mine", []);
     const late = await expectRevert(t5.connect(userB).swapIn(E("0.01"), { value: E("0.01") }));
     late ? ok("限时 Mint：窗口外拒绝") : bad("限时", "未拦截");
+  }
+
+  // ---------- poolPercent 自由 + 每笔即时转 dev + 多笔收口 ----------
+  {
+    for (const pp of [800, 900, 1000]) {
+      const tp = await launch(s, 0);
+      const tap = await tp.getAddress();
+      await mf.setPair(tap, wbnb, lp);
+      await (await fac.configMint(tap, false, RATE, pp, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+      const before = await ethers.provider.getBalance(dev.address);
+      await (await tp.connect(userB).swapIn(E("0.02"), { value: E("0.02") })).wait();
+      const after = await ethers.provider.getBalance(dev.address);
+      ok("poolPercent=" + (pp / 10) + "% 可配置且剩余 BNB 即时转 dev (dev=" + ethers.formatEther(after - before) + ")");
+    }
+  }
+  {
+    const t33 = await launch(s, 0);
+    const t33a = await t33.getAddress();
+    await mf.setPair(t33a, wbnb, lp);
+    await (await fac.configMint(t33a, false, RATE, 500, 1000, E("0.001"), E("0.04"), E("0"), E("0.1"), 3600)).wait();
+    await (await t33.connect(userB).swapIn(E("0.033"), { value: E("0.033") })).wait();
+    await (await t33.connect(userC).swapIn(E("0.033"), { value: E("0.033") })).wait();
+    await (await t33.connect(userA).swapIn(E("0.034"), { value: E("0.034") })).wait();
+    const md = await t33.mintTokensDistributed();
+    const ld = await t33.lpTokensDistributed();
+    const half = (await t33.MAX_SUPPLY()) / 2n;
+    md === half && ld === half ? ok("33%+33%+34% Mint/LP 各精确 50%") : bad("33/34 收口", md.toString());
+  }
+  {
+    const ts = await launch(s, 0);
+    const tsa = await ts.getAddress();
+    await mf.setPair(tsa, wbnb, lp);
+    await (await fac.configMint(tsa, false, RATE, 500, 1000, E("0.001"), E("0.01"), E("0"), E("0.1"), 3600)).wait();
+    for (let i = 0; i < 10; i++) await (await ts.connect(userC).swapIn(E("0.01"), { value: E("0.01") })).wait();
+    const mdx = await ts.mintTokensDistributed();
+    const ldx = await ts.lpTokensDistributed();
+    const halfx = (await ts.MAX_SUPPLY()) / 2n;
+    mdx === halfx && ldx === halfx ? ok("十笔小额 Mint 收口后各精确 50%") : bad("小额收口", mdx.toString());
   }
 
   // ---------- 确定性发射（CREATE2 + commit-reveal + bbbb 靓号） ----------

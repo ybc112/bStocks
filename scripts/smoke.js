@@ -32,7 +32,9 @@ async function main() {
   await fac.waitForDeployment();
   const facAddr = await fac.getAddress();
   const Dep = await ethers.getContractFactory("TokenDeployer");
-  const dep = await Dep.deploy(facAddr);
+  const tokenArt = await hre.artifacts.readArtifact("StocksToken");
+  const creationCode = ethers.getBytes(tokenArt.bytecode);
+  const dep = await Dep.deploy(facAddr, ethers.keccak256(creationCode), creationCode.length);
   await fac.setDeployer(await dep.getAddress());
   const wbnb = await fac.WBNB();
 
@@ -44,7 +46,7 @@ async function main() {
   const r = await tx.wait();
   const tokenAddr = r.logs.find((l) => l.fragment && l.fragment.name === "ProjectLaunched").args.token;
   const token = await ethers.getContractAt("StocksToken", tokenAddr);
-  (await token.decimals()) === 30n ? ok("代币 decimals = 30") : bad("精度");
+  (await token.decimals()) === 0n ? ok("代币 decimals = 0，总供应显示 10^30 枚") : bad("精度");
   await mf.setPair(tokenAddr, wbnb, lp);
 
   await (await fac.configMint(tokenAddr, false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();

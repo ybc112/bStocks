@@ -33,9 +33,11 @@ contract StocksToken {
     error InvalidMintConfig();
     string public name;
     string public symbol;
-    uint8 public constant decimals = 30;
+    uint8 public constant decimals = 0;
     uint256 public totalSupply;
     uint256 public constant MAX_SUPPLY = 10 ** 30;
+    // Fixed split: MINT_RESERVE (half) is distributed to minters; the other
+    // half is the LP token reserve. poolPercent only controls the BNB split.
     uint256 public constant MINT_RESERVE = MAX_SUPPLY / 2;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -63,7 +65,6 @@ contract StocksToken {
     event Graduated(uint256 totalMinted, uint256 lpBurned, uint256 devBNB);
     event FeesProcessed(uint256 tokensSwapped, uint256 bnbReceived);
     event BuyBackAndBurn(uint256 bnbIn, uint256 tokensOut);
-    
 
     modifier onlyOwner() { require(msg.sender == owner, "NO"); _; }
     modifier nonReentrant() { require(!_reentrancy, "RE"); _reentrancy = true; _; _reentrancy = false; }
@@ -85,9 +86,6 @@ contract StocksToken {
         isExcludedFromFees[address(this)] = true;
         isExcludedFromFees[_router] = true;
         isExcludedFromFees[DEAD] = true;
-
-        // Fixed-supply model: mint the entire 10^30 to the contract as the pool.
-        // Users receive their pro-rata share on mint; LP reserve comes from here.
         _mint(address(this), MAX_SUPPLY);
     }
 
@@ -115,24 +113,28 @@ contract StocksToken {
         buyTax = b; sellTax = s; transferTax = t;
     }
 
+    // Platform is fixed at 20% of the full tax. Project mechanisms fill the
+    // remaining 80%: marketing + buyback + liquidity-backflow + dividend == 800.
     uint256 public constant platformShare = 200;
     uint256 public marketingShare = 300;
     uint256 public buyBackShare = 200;
-    uint256 public liquidityShare = 200;
-    uint256 public selfDivShare = 100;
+    uint256 public liquidityBackflowShare = 200;
+    uint256 public dividendShare = 100;
     uint256 public swapThreshold = 10 ** 24;
 
-    function setFeeDistribution(uint256 m, uint256 bb, uint256 l, uint256 d) external onlyOwner {
-        require(m + bb + l + d == TAX_DIVISOR - platformShare);
+    function setFeeDistribution(uint256 m, uint256 bb, uint256 bf, uint256 dv) external onlyOwner {
+        require(m + bb + bf + dv == TAX_DIVISOR - platformShare);
         marketingShare = m;
         buyBackShare = bb;
-        liquidityShare = l;
-        selfDivShare = d;
+        liquidityBackflowShare = bf;
+        dividendShare = dv;
     }
 
     bool public mintEnabled;
     bool public whitelistOnly;
     uint256 public mintRate;
+    // BNB-side split: poolPercent (permille) of each mint's BNB goes to the pool;
+    // the rest is forwarded to devWallet immediately.
     uint256 public poolPercent = 1000;
     uint256 public lpTokenRatio = 1000;
     uint256 public minMint;
@@ -147,10 +149,13 @@ contract StocksToken {
     bool public mintCapped;
     bool public graduated;
     uint256 public totalMintedBNB;
+    uint256 public totalPoolBNB;
     uint256 public totalLPToken;
     mapping(address => bool) public whitelist;
     mapping(address => uint256) public mintedBNB;
+    mapping(address => uint256) public mintedPoolBNB;
     mapping(address => uint256) public mintedTokenAmount;
+    mapping(address => uint256) public mintedLPTokenAmount;
     uint256 public mintTokensDistributed;
     uint256 public lpTokensDistributed;
     mapping(address => bool) public refunded;
@@ -158,7 +163,7 @@ contract StocksToken {
     event MintConfigSet(uint256 capBNB, uint256 mintRate, uint256 poolPercent);
 
     function setMintConfig(bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
-        if (rate == 0 || poolPct != 500 || lpRatio == 0 || lpRatio > TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
+        if (rate == 0 || poolPct < 100 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
         mintRate = rate;
         poolPercent = poolPct;
@@ -176,13 +181,10 @@ contract StocksToken {
     function setWhitelist(address[] calldata addrs, bool f) external onlyOwner { for (uint256 i = 0; i < addrs.length; i++) whitelist[addrs[i]] = f; }
     function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.1 ether, "GT"); minCapBNB = t; }
 
-    // Sending BNB directly to the token contract is equivalent to Mint.
     receive() external payable {
-        // Router/WBNB callbacks are settlement flows, never user Mints.
         if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB) swapIn(msg.value);
     }
 
-    // Fix 1: Every mint adds liquidity in real-time, then check graduation
     function swapIn(uint256 bnbAmount) public payable nonReentrant {
         require(mintEnabled, "MOFF");
         require(block.timestamp >= mintStart && block.timestamp <= mintEnd, "MWIN");
@@ -197,28 +199,36 @@ contract StocksToken {
 
         totalMintedBNB += use;
         mintedBNB[msg.sender] += use;
-
+        refunded[msg.sender] = false;
         if (walletCap > 0) require(mintedBNB[msg.sender] <= walletCap, "WCAP");
 
-        // Fixed-supply model: total supply = 10^30 minted at deploy.
-        // LP reserve consumes poolPercent% of supply; the rest is shared
-        // pro-rata to minted BNB. Each user receives their share from the
-        // contract's pre-minted pool (contract is fee-exempt).
-        uint256 tokens = totalMintedBNB == capBNB
-            ? MINT_RESERVE - mintTokensDistributed
-            : (MINT_RESERVE * use) / capBNB;
-        require(balanceOf[address(this)] >= tokens, "LOW"); // pool has enough
+        // Fixed 50% token mint share, pro-rata by BNB.
+        bool last = totalMintedBNB >= capBNB;
+        uint256 tokens = last ? MINT_RESERVE - mintTokensDistributed : (MINT_RESERVE * use) / capBNB;
+        require(balanceOf[address(this)] >= tokens, "LOW");
         balanceOf[address(this)] -= tokens;
         balanceOf[msg.sender] += tokens;
         mintedTokenAmount[msg.sender] += tokens;
         mintTokensDistributed += tokens;
         emit Transfer(address(this), msg.sender, tokens);
 
-        // Fix 1: Every mint adds liquidity in real-time (LP tokens from pool)
-        _addLiquidityLive(use);
+        // BNB split: only the pool-percent portion pairs with the LP reserve;
+        // the remainder goes to devWallet immediately and is NOT refundable.
+        uint256 lpBNB = (use * poolPercent) / TAX_DIVISOR;
+        uint256 devBNB = use - lpBNB;
+        totalPoolBNB += lpBNB;
+        mintedPoolBNB[msg.sender] += lpBNB;
 
-        // Fix 1: Check graduation after every mint
-        if (totalMintedBNB >= capBNB) _graduate();
+        uint256 lpTokens = last ? MINT_RESERVE - lpTokensDistributed : (MINT_RESERVE * use) / capBNB;
+        mintedLPTokenAmount[msg.sender] += lpTokens;
+        _addLiquidityLive(lpBNB, lpTokens);
+
+        if (devBNB > 0 && devWallet != address(0)) {
+            (bool ok,) = payable(devWallet).call{value: devBNB}("");
+            require(ok, "DEV");
+        }
+
+        if (last) _graduate();
 
         if (msg.value > use) {
             (bool ok,) = payable(msg.sender).call{value: msg.value - use}("");
@@ -226,22 +236,15 @@ contract StocksToken {
         }
         emit Minted(msg.sender, use, tokens);
     }
-    // Fix 2 + Fix 3: Remove try/catch from _addLiquidityLive
-    function _addLiquidityLive(uint256 bnbIn) internal {
-        uint256 lpBNB = (bnbIn * poolPercent) / TAX_DIVISOR;
-        // LP share taken from pre-minted pool (fixed supply), proportional to BNB in
-        uint256 tokensForLP = totalMintedBNB == capBNB
-            ? MINT_RESERVE - lpTokensDistributed
-            : (MINT_RESERVE * bnbIn) / capBNB;
+
+    function _addLiquidityLive(uint256 lpBNB, uint256 tokensForLP) internal {
         if (lpBNB == 0 || tokensForLP == 0 || balanceOf[address(this)] < tokensForLP) return;
         allowance[address(this)][address(router)] = type(uint256).max;
         _inSwap = true;
         if (baseToken == WBNB) {
-            // Will revert on failure
             (,, uint256 liq) = router.addLiquidityETH{value: lpBNB}(address(this), tokensForLP, 0, 0, address(this), block.timestamp + 300);
             totalLPToken += liq;
         } else {
-            // Fix 2: Swap BNB to baseToken, will revert on failure
             address[] memory path = new address[](2);
             path[0] = WBNB;
             path[1] = baseToken;
@@ -249,7 +252,6 @@ contract StocksToken {
             router.swapExactETHForTokens{value: lpBNB}(0, path, address(this), block.timestamp + 300);
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
             require(baseBal > 0, "SWAP");
-            // Fix 2: Add liquidity, will revert on failure
             allowanceRouter(baseToken);
             (,, uint256 liq) = router.addLiquidity(address(this), baseToken, tokensForLP, baseBal, 0, 0, address(this), block.timestamp + 300);
             totalLPToken += liq;
@@ -283,29 +285,32 @@ contract StocksToken {
         emit Graduated(totalMintedBNB, lpBal, address(this).balance);
     }
 
-    // Only exception: _lpBalance is a view function, keep try/catch
     function _lpBalance() internal view returns (uint256) {
         if (pair == address(0)) return 0;
         try IERC20External(pair).balanceOf(address(this)) returns (uint256 b) { return b; } catch { return 0; }
     }
 
-    // Fix 6: Fix refund LP calculation
+    // Refund only the BNB that actually entered the pool (dev-forwarded BNB is not refundable).
     function refund() external nonReentrant returns (bool) {
         require(!mintCapped, "CAPED");
         require(block.timestamp > refundDeadline, "WAIT");
-        uint256 amt = mintedBNB[msg.sender];
+        uint256 amt = mintedPoolBNB[msg.sender];
         require(amt > 0, "NONE");
         require(!refunded[msg.sender], "DONE");
         refunded[msg.sender] = true;
+        mintedPoolBNB[msg.sender] = 0;
+
+        uint256 contributed = mintedBNB[msg.sender];
         mintedBNB[msg.sender] = 0;
+        totalMintedBNB -= contributed;
 
-        // Fix 6: Calculate lpToWithdraw BEFORE deducting totalMintedBNB
-        uint256 prevTotal = totalMintedBNB;
-        totalMintedBNB -= amt;
+        uint256 prevTotal = totalPoolBNB;
+        totalPoolBNB -= amt;
 
-        // Fixed-supply model: refund the exact pro-rata Mint allocation.
         uint256 tokens = mintedTokenAmount[msg.sender];
         mintedTokenAmount[msg.sender] = 0;
+        uint256 lpTokens = mintedLPTokenAmount[msg.sender];
+        mintedLPTokenAmount[msg.sender] = 0;
         uint256 held = balanceOf[msg.sender];
         require(held >= tokens, "SOLD");
         if (tokens > 0) {
@@ -314,6 +319,7 @@ contract StocksToken {
             mintTokensDistributed -= tokens;
             emit Transfer(msg.sender, address(this), tokens);
         }
+        lpTokensDistributed -= lpTokens;
 
         uint256 nativeReserved = _nativeDividendReserve();
         require(address(this).balance >= nativeReserved);
@@ -324,22 +330,19 @@ contract StocksToken {
         emit Refunded(msg.sender, amt);
         return true;
     }
-    // Fix 3 + Fix 6: Remove try/catch, use prevTotal for LP calculation
+
     function _withdrawLPForRefund(uint256 userAmount, uint256 prevTotal) internal {
         if (pair == address(0)) return;
         uint256 lpBal = _lpBalance();
         if (lpBal == 0) return;
-        // Fix 6: Use prevTotal (totalMintedBNB before deduction) for LP calculation
         uint256 lpToWithdraw = prevTotal > 0 ? (lpBal * userAmount) / prevTotal : 0;
         if (lpToWithdraw > lpBal) lpToWithdraw = lpBal;
         if (lpToWithdraw == 0) return;
         IERC20External(pair).approve(address(router), type(uint256).max);
         _inSwap = true;
         if (baseToken == WBNB) {
-            // Fix 3: Will revert on failure
             router.removeLiquidityETH(address(this), lpToWithdraw, 0, 0, address(this), block.timestamp + 300);
         } else {
-            // Fix 3: Will revert on failure
             router.removeLiquidity(address(this), baseToken, lpToWithdraw, 0, 0, address(this), block.timestamp + 300);
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this));
             if (baseBal > 0) {
@@ -347,7 +350,6 @@ contract StocksToken {
                 address[] memory path = new address[](2);
                 path[0] = baseToken;
                 path[1] = WBNB;
-                // Fix 3: Will revert on failure
                 router.swapExactTokensForETHSupportingFeeOnTransferTokens(baseBal, 0, path, address(this), block.timestamp + 300);
             }
         }
@@ -366,7 +368,6 @@ contract StocksToken {
         return true;
     }
 
-    // Fix 7: Add mint period transfer lock
     function _transfer(address from, address to, uint256 amount) internal {
         require(balanceOf[from] >= amount, "BAL");
         require(to != address(0), "ZERO");
@@ -377,8 +378,6 @@ contract StocksToken {
             emit Transfer(from, to, amount);
             return;
         }
-
-        
 
         if (_divs[DIV_HOLD].enabled) {
             _settleHold(from);
@@ -408,7 +407,6 @@ contract StocksToken {
             _refreshHold(to);
         }
 
-        // Fix 5: Shares are tracked by transfer-to-DEAD/pair logic, not in _depositDiv
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
 
@@ -416,31 +414,10 @@ contract StocksToken {
             _processFees();
         }
     }
-    // Fix 3 + Fix 4: Remove try/catch, handle baseToken != WBNB, use balance diff
-    function _processFees() internal {
-        uint256 selfTokenReserved = _selfTokenDividendReserve();
-        require(balanceOf[address(this)] >= selfTokenReserved);
-        uint256 contractTokens = balanceOf[address(this)] - selfTokenReserved;
-        if (contractTokens < swapThreshold) return;
-        uint256 swapAmt = swapThreshold;
-        uint8 activeDiv = _activeDivId();
-        uint256 dividendShare = activeDiv == 0 ? 0 : selfDivShare;
-        uint256 effectiveSelfDiv = (activeDiv != 0 && _divs[activeDiv].rewardToken == address(0)) ? dividendShare : 0;
-        // Tax shares are expressed in permille of the full tax amount. Platform
-        // is fixed at 20%; project shares must fill the remaining 80%.
-        uint256 total = TAX_DIVISOR;
-        if (total == 0) return;
 
-        uint256 halfLiquidityShare = liquidityShare / 2;
-        uint256 swapTotal = total - effectiveSelfDiv - halfLiquidityShare;
-        if (swapTotal == 0) return;
-        uint256 liqTokens = (swapAmt * halfLiquidityShare) / total;
-        uint256 sDivTokens = (swapAmt * effectiveSelfDiv) / total;
-        uint256 swapTokens = swapAmt - liqTokens - sDivTokens;
-
-        if (sDivTokens > 0 && activeDiv != 0) _creditDividend(activeDiv, sDivTokens);
-
-        _inSwap = true;
+    // Loopback to turn a token chunk into BNB via the active pool.
+    function _swapTokensToBNB(uint256 amount) internal returns (uint256 bnb) {
+        if (amount == 0 || balanceOf[address(this)] < amount) return 0;
         address[] memory path;
         if (baseToken == WBNB) {
             path = new address[](2);
@@ -452,98 +429,99 @@ contract StocksToken {
             path[1] = baseToken;
             path[2] = WBNB;
         }
-        uint256 minOut = minAmountOut[WBNB];
+        _inSwap = true;
         uint256 before = address(this).balance;
-        router.swapExactTokensForETHSupportingFeeOnTransferTokens(swapTokens, minOut, path, address(this), block.timestamp + 300);
+        router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
         _inSwap = false;
+        bnb = address(this).balance - before;
+    }
 
-        uint256 bnbFromSwap = address(this).balance - before;
+    // Allocate the FULL tax (permille = 1000) precisely:
+    // platform 200 ; project shares sum to 800. Each share swaps its own tokens.
+    function _processFees() internal {
+        uint256 free = balanceOf[address(this)] - _selfTokenDividendReserve();
+        if (free < swapThreshold) return;
+        uint256 amt = swapThreshold;
+        uint256 total = TAX_DIVISOR;
+        uint8 activeDiv = _activeDivId();
+        bool nativeDiv = activeDiv != 0 && _divs[activeDiv].rewardToken == address(0);
 
-        if (platformShare > 0 && launchpad != address(0)) {
-            uint256 pFee = (bnbFromSwap * platformShare) / swapTotal;
-            if (pFee > 0) {
-                ILaunchpad(launchpad).onProjectFee{value: pFee}(address(this), msg.sender, pFee);
-            }
+        uint256 platformTok = (amt * platformShare) / total;
+        uint256 mktTok = (amt * marketingShare) / total;
+        uint256 bbTok = (amt * buyBackShare) / total;
+        uint256 bfTok = (amt * liquidityBackflowShare) / total;
+        uint256 bfTokenHalf = bfTok / 2;
+        uint256 divTok = (amt * dividendShare) / total;
+
+        uint256 platformBnB = _swapTokensToBNB(platformTok);
+        uint256 mktBnB = _swapTokensToBNB(mktTok);
+        uint256 bbBnB = _swapTokensToBNB(bbTok);
+        uint256 bfBnB = _swapTokensToBNB(bfTokenHalf);
+
+        if (platformBnB > 0 && launchpad != address(0)) {
+            ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB);
         }
-
-        if (marketingShare > 0 && marketingWallet != address(0)) {
-            uint256 mkt = (bnbFromSwap * marketingShare) / swapTotal;
-            if (mkt > 0) {
-                (bool ok,) = payable(marketingWallet).call{value: mkt}("");
-                require(ok, "MKT");
-            }
+        if (mktBnB > 0 && marketingWallet != address(0)) {
+            (bool ok,) = payable(marketingWallet).call{value: mktBnB}("");
+            require(ok);
         }
+        if (bbBnB > 0) _buyBackAndBurn(bbBnB);
+        if (bfBnB > 0 && bfTokenHalf > 0) _backfillLiquidity(bfBnB, bfTokenHalf);
 
-        if (buyBackShare > 0) {
-            uint256 bb = (bnbFromSwap * buyBackShare) / swapTotal;
-            if (bb > 0) _buyBackAndBurn(bb);
-        }
-
-        if (liquidityShare > 0) {
-            uint256 lq = (bnbFromSwap * halfLiquidityShare) / swapTotal;
-            if (lq > 0 && liqTokens > 0) _backfillLiquidity(lq, liqTokens);
-        }
-
-        if (activeDiv != 0 && dividendShare > 0 && effectiveSelfDiv == 0) {
-            uint256 divValue = (bnbFromSwap * dividendShare) / swapTotal;
-            if (divValue > 0) {
-                address reward = _divs[activeDiv].rewardToken;
-                if (reward == WBNB) {
-                    _creditDividend(activeDiv, divValue);
-                } else {
-                    uint256 rewardBefore = IERC20External(reward).balanceOf(address(this));
-                    address[] memory divPath = new address[](2);
-                    divPath[0] = WBNB;
-                    divPath[1] = reward;
-                    _inSwap = true;
-                    router.swapExactETHForTokens{value: divValue}(minAmountOut[reward], divPath, address(this), block.timestamp + 300);
-                    _inSwap = false;
-                    _creditDividend(activeDiv, IERC20External(reward).balanceOf(address(this)) - rewardBefore);
+        if (activeDiv != 0) {
+            if (nativeDiv) {
+                _creditDividend(activeDiv, divTok);
+            } else {
+                uint256 dBnB = _swapTokensToBNB(divTok);
+                if (dBnB > 0) {
+                    address reward = _divs[activeDiv].rewardToken;
+                    if (reward == WBNB) {
+                        _creditDividend(activeDiv, dBnB);
+                    } else {
+                        uint256 beforeRew = IERC20External(reward).balanceOf(address(this));
+                        address[] memory rp = new address[](2);
+                        rp[0] = WBNB;
+                        rp[1] = reward;
+                        _inSwap = true;
+                        router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300);
+                        _inSwap = false;
+                        _creditDividend(activeDiv, IERC20External(reward).balanceOf(address(this)) - beforeRew);
+                    }
                 }
             }
         }
-
-        emit FeesProcessed(swapTokens, bnbFromSwap);
+        emit FeesProcessed(amt, 0);
     }
-    // Fix 3: Remove try/catch from _buyBackAndBurn
+
     function _buyBackAndBurn(uint256 bnbIn) internal {
         if (bnbIn == 0) return;
         _inSwap = true;
         address[] memory path = new address[](2);
         path[0] = WBNB;
         path[1] = address(this);
-        uint256 minOut = minAmountOut[address(this)];
-        // Fix 3: Will revert on failure
-        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minOut, path, DEAD, block.timestamp + 300);
+        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300);
         _inSwap = false;
         emit BuyBackAndBurn(bnbIn, bnbIn);
     }
 
-
-    // Fix 3: Remove try/catch from _backfillLiquidity
+    // Liquidity backflow: pair kept token half + swapped-BNB half, LP goes to DEAD.
     function _backfillLiquidity(uint256 bnbIn, uint256 tokenIn) internal {
         if (bnbIn == 0 || tokenIn == 0) return;
+        if (balanceOf[address(this)] < tokenIn) return;
         _inSwap = true;
         if (baseToken == WBNB) {
-            if (balanceOf[address(this)] >= tokenIn) {
-                allowance[address(this)][address(router)] = type(uint256).max;
-                (,, uint256 liq) = router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, address(this), block.timestamp + 300);
-                totalLPToken += liq;
-            }
+            allowance[address(this)][address(router)] = type(uint256).max;
+            router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300);
         } else {
             address[] memory path = new address[](2);
             path[0] = WBNB;
             path[1] = baseToken;
-            // Fix 3: Will revert on failure
             uint256 baseBefore = IERC20External(baseToken).balanceOf(address(this));
             router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300);
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
-            require(baseBal > 0, "SWAP");
+            require(baseBal > 0);
             allowanceRouter(baseToken);
-            if (balanceOf[address(this)] >= tokenIn) {
-                (,, uint256 liq) = router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, address(this), block.timestamp + 300);
-                totalLPToken += liq;
-            }
+            router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300);
         }
         _inSwap = false;
     }
@@ -577,7 +555,6 @@ contract StocksToken {
         return _divs[id].shares[user];
     }
 
-    // Fix 5: pendingDiv - correct formula with underflow protection
     function pendingDiv(uint8 id, address user) external view returns (uint256) {
         DivData storage d = _divs[id];
         if (d.shares[user] == 0 || d.totalShares == 0) return 0;
@@ -605,7 +582,6 @@ contract StocksToken {
         d.enabled = f;
     }
 
-// Fix 5: _depositDiv only adds native token dividends; ERC20 pools use depositDivToken
     function _recordDivShare(uint8 id, address account, uint256 amount) internal {
         DivData storage d = _divs[id];
         if (!d.enabled) return;
@@ -641,19 +617,19 @@ contract StocksToken {
             if (_divs[id].rewardToken == address(0)) reserved += _divs[id].pendingReward;
         }
     }
+
     function _activeDivId() internal view returns (uint8) {
         for (uint8 id = DIV_HOLD; id <= DIV_BURN; id++) if (_divs[id].enabled) return id;
         return 0;
     }
-    // Fix 5: depositDiv checks d.enabled
-function depositDiv(uint8 id) external payable nonReentrant {
+
+    function depositDiv(uint8 id) external payable nonReentrant {
         DivData storage d = _divs[id];
         require(d.rewardToken == WBNB);
         require(d.enabled, "OFF");
         _creditDividend(id, msg.value);
     }
 
-    // Fix 5 + Fix 9: depositDivToken checks d.enabled, uses safeTransfer
     function depositDivToken(uint8 id, address token, uint256 amount) external nonReentrant {
         DivData storage d = _divs[id];
         require(d.rewardToken == token, "TKN");
@@ -662,7 +638,6 @@ function depositDiv(uint8 id) external payable nonReentrant {
         _creditDividend(id, amount);
     }
 
-    // Fix 5 + Fix 10: claimDiv deducts from pendingReward, adds to paidPerShare
     function claimDiv(uint8 id) external nonReentrant {
         DivData storage d = _divs[id];
         require(d.enabled, "DISABLED");
@@ -677,7 +652,6 @@ function depositDiv(uint8 id) external payable nonReentrant {
         _payout(id, msg.sender, due);
     }
 
-    // Fix 9: ERC20 dividend safe transfer
     function _payout(uint8 id, address user, uint256 amount) internal {
         if (amount == 0) return;
         DivData storage d = _divs[id];
@@ -689,17 +663,15 @@ function depositDiv(uint8 id) external payable nonReentrant {
             (bool ok,) = payable(user).call{value: amount}("");
             require(ok, "PAY");
         } else {
-            // Fix 9: Safe transfer for ERC20
             (bool balOk, bytes memory balData) = address(d.rewardToken).staticcall(abi.encodeWithSelector(0x70a08231, address(this)));
-        require(balOk && balData.length >= 32);
+            require(balOk && balData.length >= 32);
             uint256 erc20Bal = abi.decode(balData, (uint256));
             require(erc20Bal >= amount, "BAL");
             (bool tOk, bytes memory ret) = address(d.rewardToken).call(abi.encodeWithSelector(0xa9059cbb, user, amount));
-        require(tOk && (ret.length == 0 || abi.decode(ret, (bool))));
+            require(tOk && (ret.length == 0 || abi.decode(ret, (bool))));
         }
     }
 
-    // Fix 5: _settleHold pays out pending dividends correctly
     function _settleHold(address user) internal {
         DivData storage d = _divs[DIV_HOLD];
         if (!d.enabled) return;
@@ -708,7 +680,6 @@ function depositDiv(uint8 id) external payable nonReentrant {
         uint256 gross = (old * d.accPerShare) / DIV_PRECISION;
         if (d.paidPerShare[user] >= gross) return;
         uint256 due = gross - d.paidPerShare[user];
-        // Fix 10: Add to paidPerShare
         if (due == 0) return;
         require(d.pendingReward >= due);
         d.paidPerShare[user] = gross;
@@ -716,7 +687,6 @@ function depositDiv(uint8 id) external payable nonReentrant {
         _payout(DIV_HOLD, user, due);
     }
 
-    // Fix 5: _refreshHold does NOT reset paidPerShare to current accPerShare
     function _refreshHold(address user) internal {
         DivData storage d = _divs[DIV_HOLD];
         if (!d.enabled) return;
@@ -728,7 +698,6 @@ function depositDiv(uint8 id) external payable nonReentrant {
         d.paidPerShare[user] = (newShare * d.accPerShare) / DIV_PRECISION;
     }
 
-    // Fix 5: burnDiv tracks shares for DIV_BURN
     function burnDiv(uint256 amount) external nonReentrant {
         require(balanceOf[msg.sender] >= amount, "BAL");
         _burn(msg.sender, amount);
@@ -754,4 +723,3 @@ function depositDiv(uint8 id) external payable nonReentrant {
         require(ok, "WIT");
     }
 }
-
