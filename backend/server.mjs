@@ -53,7 +53,7 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || "";
 const RPC_URL = process.env.RPC_URL || "https://bsc-dataseed.binance.org/";
 const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "";
 const DEPLOYER_ADDRESS = process.env.DEPLOYER_ADDRESS || "";
-const MAX_VANITY_ATTEMPTS = Math.min(5_000_000, Math.max(1_000, Number(process.env.MAX_VANITY_ATTEMPTS || 5_000_000)));
+const MAX_VANITY_ATTEMPTS = 5_000_000;
 
 // In-memory deployment store (use DB in production)
 const deployments = [];
@@ -196,8 +196,9 @@ app.post("/api/vanity/search", async (req, res) => {
     return res.status(400).json({ error: `maxAttempts must be an integer between 1 and ${MAX_VANITY_ATTEMPTS}` });
   }
 
-  let codeHash = typeof requestedHash === "string" && /^0x[0-9a-fA-F]{64}$/.test(requestedHash) ? requestedHash : initCodeHash;
-  if (Array.isArray(constructorArgs) && constructorArgs.length === 7) {
+  const hasRequestedHash = typeof requestedHash === "string" && /^0x[0-9a-fA-F]{64}$/.test(requestedHash);
+  let codeHash = hasRequestedHash ? requestedHash : initCodeHash;
+  if (!hasRequestedHash && Array.isArray(constructorArgs) && constructorArgs.length === 7) {
     if (!stockArtifact) {
       return res.status(500).json({ error: "Contract artifact not loaded" });
     }

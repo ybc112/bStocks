@@ -117,7 +117,10 @@ export async function vanitySearch(suffix: string, deployer: string, constructor
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ suffix, deployer, maxAttempts, constructorArgs, initCodeHash }),
   });
-  if (!r.ok) throw new Error(`vanity api ${r.status}`);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(j.error || `vanity api ${r.status}`);
+  }
   return (await r.json()) as VanityResult;
 }
 
