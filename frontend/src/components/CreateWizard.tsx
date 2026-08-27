@@ -155,7 +155,10 @@ export default function CreateWizard() {
       setStage("vanity", { state: "run" });
       if (w.vanityOn) {
         const codeHash = await new Contract(deployerAddr, DEPLOYER_ABI, readOnlyProvider()).initCodeHash(w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase) as string;
-        const v = await vanitySearch(w.vanitySuffix, deployerAddr, [w.name, w.sym, router, pfactory, w.dev, marketing, resolvedBase], 5000000, codeHash);
+        // Use the on-chain init-code hash as the single source of truth.
+        // 500k attempts keeps compatibility with older API connectors and
+        // gives a 99.95% success probability for a four-hex suffix.
+        const v = await vanitySearch(w.vanitySuffix, deployerAddr, undefined, 500000, codeHash);
         if (!v.found || !v.salt) {
           setStage("vanity", { state: "err", info: v.message || "not found" });
           setErrMsg(t("err_vanity"));
