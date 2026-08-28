@@ -15,7 +15,8 @@
  * Run on testnet:  npx hardhat run scripts/verify-atomic.mjs --network bscTestnet
  */
 
-import { ethers } from "hardhat";
+import hre from "hardhat";
+const { ethers } = hre;
 
 const E = (n) => ethers.parseEther(n);
 const U = (n) => ethers.parseUnits(n, 0);

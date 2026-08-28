@@ -181,6 +181,58 @@ contract LaunchpadFactory {
     function configWhitelist(address t, address[] calldata addrs, bool f) external onlyProjectOwner(t) { _token(t).setWhitelist(addrs, f); }
     function configDiv(address t, uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyProjectOwner(t) { _token(t).enableDiv(id, rewardToken, minEligible, f); }
     function configPool(address t, address p) external onlyProjectOwner(t) { _token(t).setPair(p); }
+// Atomic launch: deterministic deploy + full configuration in ONE tx. After
+    // acceptOwnership() THIS factory is the token owner, so all onlyOwner setters
+    // apply here. Fee distribution must sum to 800 (platform fixed at 200).
+    function launchProjectDeterministicAndConfigure(
+        bytes calldata initCode,
+        string calldata _name,
+        string calldata _symbol,
+        address _dev,
+        address _marketing,
+        address _baseToken,
+        bytes32 salt,
+        address user,
+        bool _wl,
+        uint256 _poolPct,
+        uint256 _lpRatio,
+        uint256 _minM,
+        uint256 _maxM,
+        uint256 _wCap,
+        uint256 _cap,
+        uint256 _duration,
+        uint256 _buy,
+        uint256 _sell,
+        uint256 _transfer,
+        uint256 _m,
+        uint256 _bb,
+        uint256 _l,
+        uint256 _d,
+        uint8 _divId,
+        address _divReward,
+        uint256 _divMin
+    ) external returns (address tokenAddr) {
+        require(_m + _bb + _l + _d == 800, "DIST80");
+        address base = _baseToken == address(0) ? WBNB : _baseToken;
+        require(baseTokenWhitelist[base], "BASE");
+        tokenAddr = deployer.revealAndDeploy(initCode, salt, user);
+        require(uint16(uint160(tokenAddr)) == 0xbbbb, "VANITY");
+        StocksToken t = _token(tokenAddr);
+        require(keccak256(bytes(t.name())) == keccak256(bytes(_name)) && keccak256(bytes(t.symbol())) == keccak256(bytes(_symbol)), "META");
+        require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
+        require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
+        t.acceptOwnership();
+        t.setLaunchpad(address(this));
+        projects.push(tokenAddr);
+        isProject[tokenAddr] = true;
+        tokenCreator[tokenAddr] = msg.sender;
+        t.setMintConfig(_wl, _poolPct, _lpRatio, _minM, _maxM, _wCap, _cap, _duration);
+        t.setTax(_buy, _sell, _transfer);
+        t.setFeeDistribution(_m, _bb, _l, _d);
+        if (_divId != 0) t.enableDiv(_divId, _divReward, _divMin, true);
+        emit ProjectLaunched2(tokenAddr, _dev, base, salt, true, _name, _symbol);
+        emit ProjectLaunched(tokenAddr, _dev, base);
+    }
 
     function register(address parent) external {
         require(parent != address(0) && parent != msg.sender, "PR");

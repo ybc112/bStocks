@@ -15,7 +15,8 @@
  * /api/config and frontend ENV_FACTORY.
  */
 
-import { ethers } from "hardhat";
+import hre from "hardhat";
+const { ethers } = hre;
 
 const E = (n) => ethers.parseEther(n);
 const assert = (c, m) => { if (!c) throw new Error(m); };
