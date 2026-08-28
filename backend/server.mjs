@@ -244,7 +244,7 @@ app.post("/api/vanity/init-code-hash", (req, res) => {
     return res.status(400).json({ error: "constructorArgs must contain 7 values" });
   }
   try {
-    const initCode = stockArtifact.bytecode + abiCoder.encode(
+    const initCode = stockArtifact.bytecode + ethers.AbiCoder.defaultAbiCoder().encode(
       ["string", "string", "address", "address", "address", "address", "address"], constructorArgs
     ).slice(2);
     const initCodeHash = ethers.keccak256(ethers.getBytes(initCode));
