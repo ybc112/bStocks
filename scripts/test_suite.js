@@ -87,7 +87,7 @@ async function main() {
   const capT = await launch(s, 0);
   await mf.setPair(await capT.getAddress(), wbnb, lp);
   {
-    await (await fac.configMint(await capT.getAddress(), false, RATE, 500, 1000, E("0.001"), E("0.06"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await capT.getAddress(), false, 500, 1000, E("0.001"), E("0.06"), E("0"), E("0.1"), 3600)).wait();
     await (await capT.connect(userB).swapIn(E("0.04"), { value: E("0.04") })).wait();
     const lpBal = await LP.balanceOf(await capT.getAddress());
     lpBal > 0n ? ok("mint 实入池（每笔 mint LP 即时增加）") : bad("实入池", "LP=0");
@@ -97,7 +97,7 @@ async function main() {
   {
     const direct = await launch(s, 0);
     await mf.setPair(await direct.getAddress(), wbnb, lp);
-    await (await fac.configMint(await direct.getAddress(), false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await direct.getAddress(), false, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     await (await userA.sendTransaction({ to: await direct.getAddress(), value: E("0.01") })).wait();
     const minted = await direct.mintedBNB(userA.address);
     minted === E("0.01") && (await direct.balanceOf(userA.address)) > 0n ? ok("直接转 BNB 到代币合约即可 Mint") : bad("直接转 BNB Mint", minted.toString());
@@ -122,7 +122,7 @@ async function main() {
     const devBefore = await ethers.provider.getBalance(dev.address);
     const t2 = await launch(s, 0);
     await mf.setPair(await t2.getAddress(), wbnb, lp);
-    await (await fac.configMint(await t2.getAddress(), false, RATE, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await t2.getAddress(), false, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
     await (await t2.connect(userA).swapIn(E("0.1"), { value: E("0.1") })).wait();
     const devAfter = await ethers.provider.getBalance(dev.address);
     devAfter > devBefore ? ok("毕业剩余 BNB 到 dev 地址（50% 池比例）") : bad("剩余BNB", devAfter.toString());
@@ -132,7 +132,7 @@ async function main() {
   {
     const t3 = await launch(s, 0);
     await mf.setPair(await t3.getAddress(), wbnb, lp);
-    await (await fac.configMint(await t3.getAddress(), false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await t3.getAddress(), false, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     await (await t3.connect(userB).swapIn(E("0.02"), { value: E("0.02") })).wait();
     const early = await expectRevert(t3.connect(userB).refund());
     await hre.network.provider.send("evm_increaseTime", [90000]);
@@ -151,7 +151,7 @@ async function main() {
     await usdt.mint(await mr.getAddress(), 10n ** 30n);
     const t4 = await launch(s, usdtAddr);
     await mf.setPair(await t4.getAddress(), usdtAddr, lp);
-    await (await fac.configMint(await t4.getAddress(), false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(await t4.getAddress(), false, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     await (await t4.connect(userC).swapIn(E("0.02"), { value: E("0.02") })).wait();
     const lpBal = await LP.balanceOf(await t4.getAddress());
     lpBal > 0n ? ok("ERC20 底池：BNB 换底池币加池成功") : bad("ERC20 入池", "LP=0");
@@ -161,7 +161,7 @@ async function main() {
   const ft = await launch(s, 0);
   const ftAddr = await ft.getAddress();
   await mf.setPair(ftAddr, wbnb, lp);
-  await (await fac.configMint(ftAddr, false, RATE, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(ftAddr, false, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
   await (await ft.connect(userA).swapIn(E("0.1"), { value: E("0.1") })).wait();
   await (await fac.configTax(ftAddr, 100, 100, 0)).wait();
   {
@@ -202,7 +202,7 @@ async function main() {
     const addr = tx.logs.find((l) => l.fragment && l.fragment.name === "ProjectLaunched").args.token;
     const tok = await ethers.getContractAt("StocksToken", addr);
     await mf.setPair(addr, wbnb, lp);
-    await (await fac.configMint(addr, false, RATE, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(addr, false, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
     await (await tok.connect(userA).swapIn(E("0.1"), { value: E("0.1") })).wait();
     await (await fac.configTax(addr, 100, 100, 0)).wait();
     return { addr, tok };
@@ -261,11 +261,11 @@ async function main() {
     const t5 = await launch(s, 0);
     const a5 = await t5.getAddress();
     const r1 = await expectRevert(fac.configMint(a5, false, 0, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r2 = await expectRevert(fac.configMint(a5, false, RATE, 1001, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r3 = await expectRevert(fac.configMint(a5, false, RATE, 500, 1000, E("0.00000000001"), E("0.05"), E("0"), E("0.1"), 3600));
-    const r4 = await expectRevert(fac.configMint(a5, false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.09"), 3600));
-    r1 && r2 && r3 && r4 ? ok("Mint 参数校验(rate/poolPct/minMint/门槛≥0.1)") : bad("Mint 校验", `${r1}${r2}${r3}${r4}`);
-    await (await fac.configMint(a5, true, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+    const r2 = await expectRevert(fac.configMint(a5, false, 1001, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600));
+    const r3 = await expectRevert(fac.configMint(a5, false, 500, 1000, E("0.00000000001"), E("0.05"), E("0"), E("0.1"), 3600));
+    const r4 = await expectRevert(fac.configMint(a5, false, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.09"), 3600));
+    r1 && r2 && r3 && r4 ? ok("Mint 参数校验(poolPct<100 / poolPct>1000 / minMint / 门槛≥0.1)") : bad("Mint 校验", `${r1}${r2}${r3}${r4}`);
+    await (await fac.configMint(a5, true, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
     const blocked = await expectRevert(t5.connect(userB).swapIn(E("0.01"), { value: E("0.01") }));
     await (await fac.configWhitelist(a5, [userB.address], true)).wait();
     await (await t5.connect(userB).swapIn(E("0.01"), { value: E("0.01") })).wait();
@@ -282,7 +282,7 @@ async function main() {
       const tp = await launch(s, 0);
       const tap = await tp.getAddress();
       await mf.setPair(tap, wbnb, lp);
-      await (await fac.configMint(tap, false, RATE, pp, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+      await (await fac.configMint(tap, false, pp, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
       const before = await ethers.provider.getBalance(dev.address);
       await (await tp.connect(userB).swapIn(E("0.02"), { value: E("0.02") })).wait();
       const after = await ethers.provider.getBalance(dev.address);
@@ -293,7 +293,7 @@ async function main() {
     const t33 = await launch(s, 0);
     const t33a = await t33.getAddress();
     await mf.setPair(t33a, wbnb, lp);
-    await (await fac.configMint(t33a, false, RATE, 500, 1000, E("0.001"), E("0.04"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(t33a, false, 500, 1000, E("0.001"), E("0.04"), E("0"), E("0.1"), 3600)).wait();
     await (await t33.connect(userB).swapIn(E("0.033"), { value: E("0.033") })).wait();
     await (await t33.connect(userC).swapIn(E("0.033"), { value: E("0.033") })).wait();
     await (await t33.connect(userA).swapIn(E("0.034"), { value: E("0.034") })).wait();
@@ -306,7 +306,7 @@ async function main() {
     const ts = await launch(s, 0);
     const tsa = await ts.getAddress();
     await mf.setPair(tsa, wbnb, lp);
-    await (await fac.configMint(tsa, false, RATE, 500, 1000, E("0.001"), E("0.01"), E("0"), E("0.1"), 3600)).wait();
+    await (await fac.configMint(tsa, false, 500, 1000, E("0.001"), E("0.01"), E("0"), E("0.1"), 3600)).wait();
     for (let i = 0; i < 10; i++) await (await ts.connect(userC).swapIn(E("0.01"), { value: E("0.01") })).wait();
     const mdx = await ts.mintTokensDistributed();
     const ldx = await ts.lpTokensDistributed();
@@ -338,7 +338,7 @@ async function main() {
       const det = await ethers.getContractAt("StocksToken", ev2.args.token);
       const ownerOk = (await det.owner()) === (await fac.getAddress());
       const lpOk = (await det.launchpad()) === (await fac.getAddress());
-      const cfgOk = await (await fac.configMint(ev2.args.token, false, RATE, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+      const cfgOk = await (await fac.configMint(ev2.args.token, false, 500, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
       const isVanity = String(ev2.args.token).toLowerCase().endsWith("bbbb");
       const matchesPred = String(ev2.args.token).toLowerCase() === predicted.toLowerCase();
       const replay = await expectRevert(fac.launchProjectDeterministic(init, name, sym, dev.address, mkt.address, ethers.ZeroAddress, salt, userA.address));

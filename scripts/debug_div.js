@@ -26,7 +26,7 @@ async function main() {
   const ft = await ethers.getContractAt("StocksToken", r.logs.find((l) => l.fragment && l.fragment.name === "ProjectLaunched").args.token);
   const ftAddr = await ft.getAddress();
   await mf.setPair(ftAddr, await ft.WBNB(), lp);
-  await (await fac.configMint(ftAddr, false, RATE, 1000, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(ftAddr, false, 1000, 1000, E("0.001"), E("0.1"), E("0"), E("0.1"), 3600)).wait();
   await (await ft.connect(userA).swapIn(E("0.1"), { value: E("0.1") })).wait();
   await (await fac.configTax(ftAddr, 100, 100, 0)).wait();
 

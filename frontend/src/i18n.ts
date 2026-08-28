@@ -38,7 +38,7 @@ const zh = {
   wz_launch_fail: "发射中断", wz_back_form: "返回表单",
   wz_success_real_sub: "代币合约已确定性部署上链，全部配置已写入合约",
   wz_partial: "部分完成", wz_partial_sub: "代币已部署，但后续步骤未全部完成，请查看交易记录",
-  wz_liq_share: "流动性加池", wz_buyback_note: "回购所得代币直接送入黑洞地址，制造通缩",
+  wz_liq_share: "流动性回流", wz_buyback_note: "回购所得代币直接送入黑洞地址，制造通缩",
   board_no_factory: "未配置 Factory 合约地址，无法加载链上项目",
   board_empty: "暂无链上项目", board_empty_sub: "去发射台创建第一个代币",
   board_chain: "BSC 链上实时数据",

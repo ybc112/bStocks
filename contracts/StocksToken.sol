@@ -132,7 +132,6 @@ contract StocksToken {
 
     bool public mintEnabled;
     bool public whitelistOnly;
-    uint256 public mintRate;
     // BNB-side split: poolPercent (permille) of each mint's BNB goes to the pool;
     // the rest is forwarded to devWallet immediately.
     uint256 public poolPercent = 1000;
@@ -160,12 +159,11 @@ contract StocksToken {
     uint256 public lpTokensDistributed;
     mapping(address => bool) public refunded;
 
-    event MintConfigSet(uint256 capBNB, uint256 mintRate, uint256 poolPercent);
+    event MintConfigSet(uint256 capBNB, uint256 poolPercent);
 
-    function setMintConfig(bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
-        if (rate == 0 || poolPct < 100 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
+    function setMintConfig(bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
+        if (poolPct < 100 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
-        mintRate = rate;
         poolPercent = poolPct;
         lpTokenRatio = lpRatio;
         minMint = minM;
@@ -176,7 +174,7 @@ contract StocksToken {
         mintStart = block.timestamp;
         mintEnd = block.timestamp + duration;
         refundDeadline = block.timestamp + MINT_REFUND_WINDOW;
-        emit MintConfigSet(cap, rate, poolPct);
+        emit MintConfigSet(cap, poolPct);
     }
     function setWhitelist(address[] calldata addrs, bool f) external onlyOwner { for (uint256 i = 0; i < addrs.length; i++) whitelist[addrs[i]] = f; }
     function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.1 ether, "GT"); minCapBNB = t; }

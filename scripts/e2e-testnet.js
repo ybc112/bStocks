@@ -68,9 +68,9 @@ async function main() {
   const token = await hre.ethers.getContractAt("StocksToken", tokenAddr);
 
   // On-chain config
-  await (await fac.configMint(tokenAddr, false, 10n ** 12n, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(tokenAddr, false, 1000, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
   await (await fac.configTax(tokenAddr, 50, 50, 10)).wait();
-  console.log("configMint  : confirmed (rate=1e12, cap=0.1 BNB, min=0.001)");
+  console.log("configMint  : confirmed (poolPct=100%, cap=0.1 BNB, min=0.001)");
   console.log("configTax   : confirmed (buy=5% sell=5% transfer=1%)");
 
   // Real mint -> real PancakeSwap testnet liquidity

@@ -16,7 +16,7 @@ type W = {
   name: string; sym: string; desc: string; x: string; tg: string;
   pool: string;
   mode: MintMode; durH: number; wlAddrs: string;
-  mintRate: number; minMint: number; maxMint: number; walletCap: number;
+  minMint: number; maxMint: number; walletCap: number;
   capBNB: number; poolPercent: number; dev: string;
   buy: number; sell: number; transfer: number;
   feeMkt: number; feeBb: number; feeLiq: number; feeSelf: number;
@@ -32,7 +32,7 @@ const INIT: W = {
   name: "", sym: "", desc: "", x: "", tg: "",
   pool: "BNB",
   mode: "public", durH: 48, wlAddrs: "",
-  mintRate: 100000, minMint: 0.001, maxMint: 0.1, walletCap: 0.5,
+  minMint: 0.001, maxMint: 0.1, walletCap: 0.5,
   capBNB: 10, poolPercent: 50, dev: "",
   buy: 5, sell: 5, transfer: 1,
   feeMkt: 300, feeBb: 200, feeLiq: 200, feeSelf: 100,
@@ -101,7 +101,8 @@ export default function CreateWizard() {
   const steps = [t("wz_s1"), t("wz_s2"), t("wz_s3"), t("wz_s4"), t("wz_s5")];
   const canNext = step !== 0 || (w.name.trim() && w.sym.trim());
   const poolAsset = assetOf(w.pool);
-  const feeTotal = (w.mktOn ? w.feeMkt : 0) + (w.buybackOn ? w.feeBb : 0) + w.feeLiq + w.feeSelf;
+  const divOn = w.holderOn || w.lpOn || w.bdOn;
+  const feeTotal = (w.mktOn ? w.feeMkt : 0) + (w.buybackOn ? w.feeBb : 0) + w.feeLiq + (divOn ? w.feeSelf : 0);
   const feeOverflow = feeTotal !== 800;
   const wlCount = parseWl(w.wlAddrs).length;
 
@@ -198,7 +199,6 @@ export default function CreateWizard() {
       txs.push(await waitTx("configMint", factory.configMint(
         tokenAddr,
         w.mode === "wl",
-        BigInt(Math.round(w.mintRate)),
         BigInt(Math.round(w.poolPercent * 10)),
         1000n,
         parseEther(String(w.minMint)),
@@ -459,9 +459,14 @@ export default function CreateWizard() {
                     <p className="mt-1 text-[11px] text-fog">达到此金额即毕业上 PancakeSwap，最低 0.1 BNB</p>
                   </div>
                   <div>
-                    <div className="flex items-baseline justify-between"><Lbl>Mint 兑换率 (mintRate)</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.mintRate.toLocaleString()}</span></div>
-                    <input type="range" min={1000} max={10000000} step={1000} value={w.mintRate} onChange={(e) => set({ mintRate: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">1 BNB = {w.mintRate.toLocaleString()} 枚（1 枚 = 10^18 raw，总供应 10^30 raw）</p>
+                    <Lbl>Mint 配置（实时）</Lbl>
+                    <div className="space-y-1 rounded-xl border border-line bg-panel2/60 p-3 font-mono2 text-[11.5px]">
+                      <div className="flex justify-between gap-2"><span className="text-fog">Mint 总份额</span><span className="font-bold text-snow">5×10^29 枚</span></div>
+                      <div className="flex justify-between gap-2"><span className="text-fog">当前毕业门槛</span><span className="font-bold text-snow">{w.capBNB} BNB</span></div>
+                      <div className="flex justify-between gap-2"><span className="text-fog">理论每 1 BNB 获得</span><span className="font-bold text-gold2">{(5e29 / w.capBNB).toExponential(2)} 枚</span></div>
+                      <div className="border-t border-line/70 pt-1 text-[10px] text-fog">= 5×10^29 ÷ {w.capBNB}</div>
+                    </div>
+                    <p className="mt-1 text-[11px] text-fog">按 Mint 总份额均分，公式固定，不设兑换率参数</p>
                   </div>
                 </div>
 
@@ -519,7 +524,7 @@ export default function CreateWizard() {
                       { k: "feeMkt" as const, l: t("mech_mkt"), on: w.mktOn },
                       { k: "feeBb" as const, l: t("mech_buyback"), on: w.buybackOn },
                       { k: "feeLiq" as const, l: t("wz_liq_share"), on: true },
-                      { k: "feeSelf" as const, l: `${t("mech_holder")}·${t("opt_native")}`, on: w.holderOn && w.holderToken === "native" },
+                      { k: "feeSelf" as const, l: `${t("mech_holder")}·${t("opt_native")}`, on: divOn },
                     ]).map((x) => (
                       <div key={x.k} className={x.on ? "" : "opacity-40"}>
                         <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 10).toFixed(1)}%</span></div>
@@ -591,14 +596,14 @@ export default function CreateWizard() {
                       [t("wz_name"), `${w.name} ($${w.sym})`],
                       [t("wz_supply"), "1,000,000,000,000,000,000,000,000,000,000 枚 · 0 decimals"],
                       ["毕业目标", `${w.capBNB} BNB`],
-                      ["Mint 兑换率", `1 BNB = ${w.mintRate.toLocaleString()} 枚`],
+                      ["理论每 1 BNB 获得", `${(5e29 / w.capBNB).toExponential(2)} 枚（5×10^29 ÷ ${w.capBNB}）`],
                       ["单笔范围", `${w.minMint} - ${w.maxMint} BNB`],
                       ["每钱包上限", w.walletCap > 0 ? `${w.walletCap} BNB` : "不限制"],
                       ["Mint 模式", t(`mode_${w.mode}` as never) + (w.mode === "time" ? ` · ${w.durH}h` : w.mode === "wl" ? ` · ${wlCount} addr` : "")],
                       ["底池资产", `${poolAsset.sym} · ${poolAsset.name}`],
                       ["BNB 加池 / Dev", `${w.poolPercent}% / ${100 - w.poolPercent}%`],
                       [`${t("wz_buy")} / ${t("wz_sell")} / ${t("wz_transfer")}`, `${w.buy}% / ${w.sell}% / ${w.transfer}%`],
-                      ["税收分配 100%", `平台20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 加池${w.feeLiq / 10}% · 分红${w.feeSelf / 10}%`],
+                      ["税收分配 100%", `平台20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 回流${w.feeLiq / 10}% · 分红${(divOn ? w.feeSelf : 0) / 10}%`],
                       [t("dt_mech_title"), [w.mktOn && `营销${w.feeMkt / 10}%`, w.buybackOn && `回购${w.feeBb / 10}%`, w.holderOn && `分红·${optLabel(w.holderToken)}`, w.lpOn && "加池分红", w.bdOn && "燃烧分红"].filter(Boolean).join(" · ") || "—"],
                     ].map(([k, v]) => (
                       <div key={k as string} className="flex items-baseline justify-between gap-4 border-b border-line/60 py-2">

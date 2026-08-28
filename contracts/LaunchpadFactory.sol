@@ -172,8 +172,8 @@ contract LaunchpadFactory {
 
     function _token(address t) internal pure returns (StocksToken) { return StocksToken(payable(t)); }
 
-    function configMint(address t, bool wl, uint256 rate, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyProjectOwner(t) {
-        _token(t).setMintConfig(wl, rate, poolPct, lpRatio, minM, maxM, wCap, cap, duration);
+    function configMint(address t, bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyProjectOwner(t) {
+        _token(t).setMintConfig(wl, poolPct, lpRatio, minM, maxM, wCap, cap, duration);
     }
     function configTax(address t, uint256 b, uint256 s, uint256 tr) external onlyProjectOwner(t) { _token(t).setTax(b, s, tr); }
     function configFeeDistribution(address t, uint256 m, uint256 bb, uint256 l, uint256 d) external onlyProjectOwner(t) { _token(t).setFeeDistribution(m, bb, l, d); }

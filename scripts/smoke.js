@@ -49,7 +49,7 @@ async function main() {
   (await token.decimals()) === 0n ? ok("代币 decimals = 0，总供应显示 10^30 枚") : bad("精度");
   await mf.setPair(tokenAddr, wbnb, lp);
 
-  await (await fac.configMint(tokenAddr, false, RATE, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
+  await (await fac.configMint(tokenAddr, false, 500, 1000, E("0.001"), E("0.05"), E("0"), E("0.1"), 3600)).wait();
   ok("Mint 配置（cap 0.1 BNB = 门槛下限）");
 
   await (await token.connect(user).swapIn(E("0.05"), { value: E("0.05") })).wait();

@@ -44,7 +44,7 @@ export const FACTORY_ABI = [
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
   "function launchProjectDeterministic(bytes,string,string,address,address,address,bytes32,address) returns (address)",
-  "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
+  "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
   "function configFeeDistribution(address,uint256,uint256,uint256,uint256)",
   "function configDiv(address,uint8,address,uint256,bool)",
@@ -81,7 +81,6 @@ export const TOKEN_ABI = [
   "function mintEnabled() view returns (bool)",
   "function mintCapped() view returns (bool)",
   "function whitelistOnly() view returns (bool)",
-  "function mintRate() view returns (uint256)",
   "function poolPercent() view returns (uint256)",
   "function buyTax() view returns (uint256)",
   "function sellTax() view returns (uint256)",
@@ -331,7 +330,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
     const fields: { fn: string; key: string; args?: unknown[] }[] = [
       { fn: "name", key: "name" }, { fn: "symbol", key: "symbol" }, { fn: "totalSupply", key: "totalSupply" },
       { fn: "capBNB", key: "capBNB" }, { fn: "totalMintedBNB", key: "totalMintedBNB" }, { fn: "graduated", key: "graduated" },
-      { fn: "mintEnabled", key: "mintEnabled" }, { fn: "whitelistOnly", key: "whitelistOnly" }, { fn: "mintRate", key: "mintRate" },
+      { fn: "mintEnabled", key: "mintEnabled" }, { fn: "whitelistOnly", key: "whitelistOnly" },
       { fn: "poolPercent", key: "poolPercent" }, { fn: "buyTax", key: "buyTax" }, { fn: "sellTax", key: "sellTax" },
       { fn: "transferTax", key: "transferTax" }, { fn: "baseToken", key: "baseToken" }, { fn: "pair", key: "pair" },
       { fn: "devWallet", key: "devWallet" }, { fn: "refundDeadline", key: "refundDeadline" },
@@ -377,7 +376,6 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
       const baseToken = (g("baseToken") as string) ?? wbnb;
       const pair = (g("pair") as string) ?? "";
       const refundDeadline = Number((g("refundDeadline") as bigint) ?? 0n);
-      const rate = Number((g("mintRate") as bigint) ?? 0n);
       const pool = poolSymOf(baseToken, wbnb);
       const pct = goal > 0 ? raised / goal : 0;
 
@@ -428,7 +426,6 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
           t: Number((g("transferTax") as bigint) ?? 0n) / 10,
         },
         supplyBase: "1",
-        rate,
         ca: r.addr,
         dev: (g("devWallet") as string) ?? "",
         deadlineH: Math.max(0, Math.round((refundDeadline * 1000 - Date.now()) / 3600000)),
