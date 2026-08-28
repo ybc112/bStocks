@@ -91,6 +91,14 @@ const AVATAR_INDEX_FILE = path.join(AVATAR_DIR, "index.json");
 let avatarIndex = {};
 try { avatarIndex = JSON.parse(fs.readFileSync(AVATAR_INDEX_FILE, "utf8")); } catch { avatarIndex = {}; }
 
+// ---- Project metadata store (description/link/etc.) persisted to disk ----
+const PROJECTS_FILE = path.join(__dirname, "projects.json");
+let projects = {};
+try { projects = JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf8")); } catch { projects = {}; }
+function saveProjects() {
+  try { fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2)); } catch (e) { console.error("[server] save projects failed:", e.message); }
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, AVATAR_DIR),
   filename: (_req, file, cb) => {
@@ -234,6 +242,43 @@ app.post("/api/avatar/link", express.json(), (req, res) => {
     fs.writeFileSync(AVATAR_INDEX_FILE, JSON.stringify(avatarIndex, null, 2));
   } catch (e) { return res.status(500).json({ error: e.message }); }
   res.json({ url: `/api/avatar/${tokenAddress.toLowerCase()}` });
+});
+
+// ========== Project Metadata ==========
+// Persisted to projects.json (keyed by lowercase token address) so details
+// survive PM2 restart. description is NOT on-chain — stored here by the backend.
+
+app.post("/api/projects", express.json(), (req, res) => {
+  const b = req.body || {};
+  const token = String(b.tokenAddress || "");
+  if (!ethers.isAddress(token)) return res.status(400).json({ error: "Invalid tokenAddress" });
+  if (!b.name) return res.status(400).json({ error: "name required" });
+  const key = token.toLowerCase();
+  const createdAt = Number(b.createdAt) || Date.now();
+  projects[key] = {
+    tokenAddress: key,
+    name: String(b.name || "").slice(0, 64),
+    symbol: String(b.symbol || "").slice(0, 16),
+    description: String(b.description || "").slice(0, 2000),
+    twitter: String(b.twitter || "").slice(0, 512),
+    telegram: String(b.telegram || "").slice(0, 512),
+    pool: String(b.pool || "").slice(0, 16),
+    creator: String(b.creator || ""),
+    createdAt,
+  };
+  saveProjects();
+  res.json({ ok: true, tokenAddress: key });
+});
+
+app.get("/api/projects", (_req, res) => {
+  res.json({ items: Object.values(projects) });
+});
+
+app.get("/api/projects/:tokenAddress", (req, res) => {
+  const key = String(req.params.tokenAddress || "").toLowerCase();
+  const p = projects[key];
+  if (!p) return res.status(404).json({ error: "Not found" });
+  res.json(p);
 });
 
 // ========== Vanity Address ==========

@@ -162,7 +162,7 @@ contract StocksToken {
     event MintConfigSet(uint256 capBNB, uint256 poolPercent);
 
     function setMintConfig(bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
-        if (poolPct < 100 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
+        if (poolPct < 600 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
         poolPercent = poolPct;
         lpTokenRatio = lpRatio;

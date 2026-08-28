@@ -6,7 +6,7 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0xCfd307a259181103Bf6A86Db8D4aaF48882eAAc1";
+export const ENV_FACTORY: string = "0xA9EE5CF589c848fd6d27bf8F85c7f0997085912a";
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
@@ -203,6 +203,48 @@ export async function uploadAvatarForToken(tokenAddress: string, file: File): Pr
   return j.url;
 }
 
+/* ---------------- Project metadata (description / links) ---------------- */
+export type ProjectMeta = {
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  description: string;
+  twitter: string;
+  telegram: string;
+  pool: string;
+  creator: string;
+  createdAt: number;
+};
+
+export async function fetchProjectsMeta(): Promise<Record<string, ProjectMeta>> {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch(`${API_BASE}/api/projects`, { signal: ctl.signal });
+    clearTimeout(timer);
+    if (!r.ok) return {};
+    const j = (await r.json()) as { items?: ProjectMeta[] };
+    const map: Record<string, ProjectMeta> = {};
+    for (const p of j.items ?? []) map[String(p.tokenAddress).toLowerCase()] = p;
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+export async function saveProjectMeta(meta: {
+  tokenAddress: string; name: string; symbol: string; description: string;
+  twitter: string; telegram: string; pool: string; creator: string; createdAt: number;
+}): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(meta),
+  });
+  const j = await r.json().catch(() => ({})) as { error?: string };
+  if (!r.ok) throw new Error(j.error || `save project api ${r.status}`);
+}
+
 /* ---------------- multicall (Multicall3 on BSC) ---------------- */
 const MC3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const mcIface = new Interface(["function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns (bool[] success, bytes[] returnData)"]);
@@ -311,6 +353,7 @@ export type LoadResult = { tokens: Token[]; factory: string; error?: string };
 export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
   const provider = readOnlyProvider();
   const factory = factoryContract(provider, factoryAddr);
+  const metas = await fetchProjectsMeta();
   try {
     // 1) enumerate projects(0..N) via multicall — out-of-range calls fail softly
     const idxRes = await aggregate(
@@ -402,13 +445,14 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         return f ? f.sym : `${token.slice(0, 6)}…`;
       };
 
+      const meta = metas[r.addr.toLowerCase()];
       const tk: Token = {
         id: 0,
         sym,
         nameZh: name,
         nameEn: name,
-        descZh: "",
-        descEn: "",
+        descZh: meta?.description || "",
+        descEn: meta?.description || "",
         cat: graduated ? "listed" : pct >= 0.8 ? "grad" : "new",
         raised,
         goal,
@@ -444,6 +488,10 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         spark: [],
         mcapSym: pool,
         avatar: "1",
+        twitter: meta?.twitter,
+        tg: meta?.telegram,
+        creator: meta?.creator,
+        createdAt: meta?.createdAt,
       };
       tokens.push(tk);
 

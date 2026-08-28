@@ -37,6 +37,10 @@ export type Token = {
   mintLive?: boolean;
   mcapSym?: string;
   avatar?: string;
+  twitter?: string;
+  tg?: string;
+  creator?: string;
+  createdAt?: number;
 };
 
 const sp = (a: number[]) => a;

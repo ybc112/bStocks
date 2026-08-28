@@ -162,6 +162,9 @@ export default function TokenBoard() {
                       ${tk.sym}
                       <span className="rounded border border-line2 px-1 py-px text-[9.5px]" style={{ color: tk.color }}>{tk.pool}</span>
                     </div>
+                    {(lang === "zh" ? tk.descZh : tk.descEn) && (
+                      <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-fog/80">{lang === "zh" ? tk.descZh : tk.descEn}</p>
+                    )}
                   </div>
                   <span className="chip flex-none !px-2 !py-0.5 !text-[10px]" style={{ borderColor: `${MODE_COLOR[tk.mode]}55`, color: MODE_COLOR[tk.mode] }}>
                     {t(`mode_${tk.mode}` as never)}

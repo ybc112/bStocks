@@ -9,7 +9,7 @@ import { useWallet } from "./Header";
 import { readOnlyProvider, txLink, addrLink } from "../web3";
 import {
   FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, searchVanityLocal, tokenInitCode, verifySubmit, resolveFactoryAddress,
-  uploadAvatarForToken,
+  uploadAvatarForToken, saveProjectMeta,
 } from "../contracts";
 
 type W = {
@@ -33,7 +33,7 @@ const INIT: W = {
   pool: "BNB",
   mode: "public", durH: 48, wlAddrs: "",
   minMint: 0.001, maxMint: 0.1, walletCap: 0.5,
-  capBNB: 10, poolPercent: 50, dev: "",
+  capBNB: 10, poolPercent: 60, dev: "",
   buy: 5, sell: 5, transfer: 1,
   feeMkt: 300, feeBb: 200, feeLiq: 200, feeSelf: 100,
   mktOn: true, mktWallet: "",
@@ -92,6 +92,7 @@ export default function CreateWizard() {
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [metaError, setMetaError] = useState("");
   const set = (patch: Partial<W>) => setW((v) => ({ ...v, ...patch }));
   const setStage = (k: StageKey, s: Stage) => setStages((v) => ({ ...v, [k]: s }));
 
@@ -257,6 +258,19 @@ export default function CreateWizard() {
       setResult((r) => ({ ...r, txs }));
       setPhase("done");
       toast(`${t("wz_success")} ${w.sym.toUpperCase()}`);
+
+      // Persist project metadata (description/links) to the backend AFTER the
+      // token is confirmed on-chain. A failure here must NOT fake success —
+      // the token exists on-chain; we only surface that detail-save failed.
+      try {
+        await saveProjectMeta({
+          tokenAddress: tokenAddr, name: w.name, symbol: w.sym, description: w.desc,
+          twitter: w.x, telegram: w.tg, pool: w.pool, creator: addr!, createdAt: Date.now(),
+        });
+      } catch (e) {
+        setMetaError((e as Error).message || "项目详情保存失败");
+        toast(`代币已创建，但项目详情保存失败: ${(e as Error).message}`, "warn");
+      }
     } catch (e) {
       const msg = (e as Error).message || String(e);
       setErrMsg(msg.slice(0, 220));
@@ -280,6 +294,11 @@ export default function CreateWizard() {
           </svg>
           <h2 className="font-disp mt-5 text-3xl font-bold text-snow">{phase === "done" ? t("wz_success") : t("wz_partial")}</h2>
           <p className="mt-2 text-sm text-fog">{phase === "done" ? t("wz_success_real_sub") : t("wz_partial_sub")}</p>
+          {metaError && (
+            <div className="mx-auto mt-4 max-w-md rounded-xl border border-rosey/40 bg-rosey/8 px-4 py-3 text-left text-xs text-rosey">
+              <Icon name="close" size={13} className="mr-1 inline" />代币已在链上创建成功，但<b>项目详情保存失败</b>（{metaError}）。可稍后从详情页重新补充介绍。
+            </div>
+          )}
           <div className="mx-auto mt-6 flex max-w-md flex-col gap-2.5">
             <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-abyss/60 px-4 py-3">
               <div className="text-left">
@@ -488,8 +507,10 @@ export default function CreateWizard() {
 
                 <div>
                     <div className="flex items-baseline justify-between"><Lbl>BNB 加池比例</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.poolPercent}%</span></div>
-                    <input type="range" min={10} max={100} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">Mint 代币份额固定 50% · 底池代币份额固定 50% · Mint BNB 进入底池 {w.poolPercent}% · 转 Dev {(100 - w.poolPercent)}%</p>
+                    <input type="range" min={60} max={100} step={1} value={w.poolPercent} onChange={(e) => set({ poolPercent: +e.target.value })} className="w-full" />
+                    <div className="flex justify-between font-mono2 text-[10px] text-fog"><span>60%</span><span>100%</span></div>
+                    <p className="mt-1 text-[11px] text-fog">BNB 进入流动性池：60%–100% · BNB 转入 Dev：0%–{100 - 60}%（当前 {w.poolPercent}% / {(100 - w.poolPercent)}%）</p>
+                    <p className="mt-0.5 text-[10.5px] text-fog/60">Mint 代币份额固定 50% · 底池代币份额固定 50%；退款仅退实际入池的 BNB，已转 Dev 不可退</p>
                 </div>
 
                 <div><Lbl>{t("wz_dev")}</Lbl><input className="field font-mono2" value={w.dev} onChange={(e) => set({ dev: e.target.value })} placeholder={t("wz_dev_ph")} /></div>
@@ -524,16 +545,24 @@ export default function CreateWizard() {
                       { k: "feeMkt" as const, l: t("mech_mkt"), on: w.mktOn },
                       { k: "feeBb" as const, l: t("mech_buyback"), on: w.buybackOn },
                       { k: "feeLiq" as const, l: t("wz_liq_share"), on: true },
-                      { k: "feeSelf" as const, l: t("fee_self"), on: divOn },
+                      { k: "feeSelf" as const, l: t("fee_self"), on: divOn, ro: true },
                     ]).map((x) => (
                       <div key={x.k} className={x.on ? "" : "opacity-40"}>
                         <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 10).toFixed(1)}%</span></div>
-                        <input type="range" min={0} max={800} step={10} value={w[x.k]} onChange={(e) => set({ [x.k]: +e.target.value })} className="w-full" />
+                        {x.ro ? (
+                          <p className="mb-1 mt-1.5 rounded-lg border border-line/70 bg-panel/60 px-2.5 py-1.5 text-[10.5px] text-fog">
+                            {divOn ? "在「分红机制」第 3 步中设置税点" : t("fee_self_off")}
+                          </p>
+                        ) : (
+                          <input type="range" min={0} max={800} step={10} value={w[x.k]} onChange={(e) => set({ [x.k]: +e.target.value })} className="w-full" />
+                        )}
                       </div>
                     ))}
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
-                    {feeOverflow ? "项目机制必须合计 80%，平台固定 20%" : "平台 20% + 营销 + 回购 + 回流 + 分红 = 100%"}
+                    {feeOverflow
+                      ? `项目机制必须合计 80%，当前 ${(feeTotal / 10).toFixed(1)}%（${feeTotal > 800 ? "超出" : "缺少"} ${(Math.abs(800 - feeTotal) / 10).toFixed(1)}%），平台固定 20%`
+                      : `平台 20% + 营销 ${(w.mktOn ? w.feeMkt : 0) / 10}% + 回购 ${(w.buybackOn ? w.feeBb : 0) / 10}% + 回流 ${w.feeLiq / 10}% + 分红 ${(divOn ? w.feeSelf : 0) / 10}% = 100%`}
                   </p>
                   <p className="mt-1.5 text-[10.5px] text-fog">
                     <Icon name="info" size={11} className="mr-1 inline text-gold" />
@@ -561,6 +590,10 @@ export default function CreateWizard() {
                 </Tgl>
 
                 <Tgl on={w.holderOn} set={(v) => set({ holderOn: v, lpOn: v ? false : w.lpOn, bdOn: v ? false : w.bdOn })} icon="coins" label={t("mech_holder")}>
+                  <div className="mb-3">
+                    <div className="flex items-baseline justify-between"><Lbl>持币分红税点</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w.feeSelf / 10).toFixed(1)}%</span></div>
+                    <input type="range" min={0} max={800} step={10} value={w.feeSelf} onChange={(e) => set({ feeSelf: +e.target.value })} className="w-full" />
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <Lbl>{t("wz_reward_token")}</Lbl>
@@ -577,6 +610,10 @@ export default function CreateWizard() {
                 </Tgl>
 
                 <Tgl on={w.lpOn} set={(v) => set({ lpOn: v, holderOn: v ? false : w.holderOn, bdOn: v ? false : w.bdOn })} icon="drop" label={t("mech_lp")}>
+                  <div className="mb-3">
+                    <div className="flex items-baseline justify-between"><Lbl>加池分红税点</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w.feeSelf / 10).toFixed(1)}%</span></div>
+                    <input type="range" min={0} max={800} step={10} value={w.feeSelf} onChange={(e) => set({ feeSelf: +e.target.value })} className="w-full" />
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div><Lbl>{t("wz_reward_token")}</Lbl>
                       <div className="flex flex-wrap gap-1.5">
@@ -591,6 +628,10 @@ export default function CreateWizard() {
                 </Tgl>
 
                 <Tgl on={w.bdOn} set={(v) => set({ bdOn: v, holderOn: v ? false : w.holderOn, lpOn: v ? false : w.lpOn })} icon="fire" label={t("mech_burndiv")}>
+                  <div className="mb-3">
+                    <div className="flex items-baseline justify-between"><Lbl>燃烧分红税点</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w.feeSelf / 10).toFixed(1)}%</span></div>
+                    <input type="range" min={0} max={800} step={10} value={w.feeSelf} onChange={(e) => set({ feeSelf: +e.target.value })} className="w-full" />
+                  </div>
                   <p className="text-[12px] leading-relaxed text-fog">{t("wz_burndiv_note")} · {t("wz_reward_token")}: {optLabel(w.holderToken)}</p>
                 </Tgl>
               </div>

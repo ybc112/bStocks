@@ -146,15 +146,18 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="chip"><span className="text-fog">{t("dt_ca")}</span><CopyBtn text={tk.ca} shortText={short(tk.ca)} /></span>
               {tk.dev && <span className="chip"><span className="text-fog">{t("dt_dev_addr")}</span><CopyBtn text={tk.dev} shortText={short(tk.dev)} /></span>}
+              {tk.creator && <span className="chip"><span className="text-fog">Creator</span><CopyBtn text={tk.creator} shortText={short(tk.creator)} /></span>}
+              {tk.createdAt && (
+                <span className="chip"><span className="text-fog">{t("dt_created")}</span>
+                  <span className="font-mono2 text-[10.5px] text-snow">{new Date(tk.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                </span>
+              )}
               <a href={addrLink(tk.ca)} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="BscScan">
                 <Icon name="external" size={13} />
               </a>
-              {(["x", "tg", "debox"] as const).map((s) => (
-                <a key={s} href={s === "x" ? "https://x.com/bstocks_pad" : s === "tg" ? "https://t.me/bstocks_pad" : "https://debox.pro/bstocks"} target="_blank" rel="noreferrer"
-                  className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy">
-                  <Icon name={s} size={13} />
-                </a>
-              ))}
+              {tk.twitter && <a href={tk.twitter} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="X"><Icon name="x" size={13} /></a>}
+              {tk.tg && <a href={tk.tg} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="Telegram"><Icon name="tg" size={13} /></a>}
+              <a href="https://debox.pro/bstocks" target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="Debox"><Icon name="debox" size={13} /></a>
             </div>
           </div>
         </div>
