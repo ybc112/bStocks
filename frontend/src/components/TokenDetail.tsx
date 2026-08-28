@@ -103,14 +103,29 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
     }
   };
 
-  const mechs: { icon: string; label: string; val?: string }[] = [
-    ...(tk.mech.burn > 0 ? [{ icon: "flame", label: t("mech_burn"), val: `${tk.mech.burn}%` }] : []),
-    ...(tk.mech.mkt > 0 ? [{ icon: "gift", label: t("mech_mkt"), val: `${tk.mech.mkt}%` }] : []),
-    { icon: "coins", label: t("mech_holder"), val: tk.mech.holder },
-    ...(tk.mech.buyback > 0 ? [{ icon: "refresh", label: t("mech_buyback"), val: `${tk.mech.buyback}%` }] : []),
-    ...(tk.mech.lp > 0 ? [{ icon: "drop", label: t("mech_lp"), val: `${tk.mech.lp}%` }] : []),
-    ...(tk.mech.burndiv ? [{ icon: "fire", label: t("mech_burndiv") }] : []),
-  ];
+  // 链上代币(mech.dv 存在)展示完整税收分配；演示代币保留原有机制胶囊
+  const isLive = typeof tk.mech.dv === "number";
+  const divLabel = isLive
+    ? (tk.mech.divId === 2 ? t("mech_lp") : tk.mech.divId === 3 ? t("mech_burndiv") : t("mech_holder"))
+    : "";
+  const divPct = isLive ? (tk.mech.dv ?? 0) : 0;
+  const projSum = isLive ? tk.mech.mkt + tk.mech.buyback + tk.mech.lp + divPct : 0;
+  const mechs: { icon: string; label: string; val?: string }[] = isLive
+    ? [
+        ...(tk.mech.mkt > 0 ? [{ icon: "gift", label: t("mech_mkt"), val: `${tk.mech.mkt}%` }] : []),
+        ...(tk.mech.buyback > 0 ? [{ icon: "refresh", label: t("mech_buyback"), val: `${tk.mech.buyback}%` }] : []),
+        ...(tk.mech.lp > 0 ? [{ icon: "drop", label: t("mech_liq"), val: `${tk.mech.lp}%` }] : []),
+        ...(divPct > 0 ? [{ icon: "coins", label: divLabel, val: `${divPct}%` }] : []),
+        { icon: "globe", label: t("mech_platform"), val: "20%" },
+      ]
+    : [
+        ...(tk.mech.burn > 0 ? [{ icon: "flame", label: t("mech_burn"), val: `${tk.mech.burn}%` }] : []),
+        ...(tk.mech.mkt > 0 ? [{ icon: "gift", label: t("mech_mkt"), val: `${tk.mech.mkt}%` }] : []),
+        ...(tk.mech.holder && tk.mech.holder !== "—" ? [{ icon: "coins", label: t("mech_holder"), val: tk.mech.holder }] : []),
+        ...(tk.mech.buyback > 0 ? [{ icon: "refresh", label: t("mech_buyback"), val: `${tk.mech.buyback}%` }] : []),
+        ...(tk.mech.lp > 0 ? [{ icon: "drop", label: t("mech_lp"), val: `${tk.mech.lp}%` }] : []),
+        ...(tk.mech.burndiv ? [{ icon: "fire", label: t("mech_burndiv") }] : []),
+      ];
 
   const priceTxt = tk.mcapSym
     ? `${tk.price < 0.0001 && tk.price > 0 ? tk.price.toExponential(2) : tk.price.toFixed(6)} ${tk.pool}`
@@ -221,6 +236,12 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
                   </span>
                 ))}
               </div>
+              {isLive && (
+                <p className="mt-2.5 text-[10.5px] text-fog">
+                  <Icon name="info" size={11} className="mr-1 inline text-gold" />
+                  {t("mech_total")}: {projSum}% (项目) + 20% (平台) = {projSum + 20}%
+                </p>
+              )}
             </div>
           </div>
 

@@ -93,6 +93,7 @@ export default function CreateWizard() {
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [metaError, setMetaError] = useState("");
+  const [configDone, setConfigDone] = useState(false);
   const set = (patch: Partial<W>) => setW((v) => ({ ...v, ...patch }));
   const setStage = (k: StageKey, s: Stage) => setStages((v) => ({ ...v, [k]: s }));
 
@@ -100,11 +101,14 @@ export default function CreateWizard() {
     o === "native" ? t("opt_native") : o === "pool" ? `${t("opt_pool")}(${w.pool})` : o === "custom" ? t("opt_custom") : o;
 
   const steps = [t("wz_s1"), t("wz_s2"), t("wz_s3"), t("wz_s4"), t("wz_s5")];
-  const canNext = step !== 0 || (w.name.trim() && w.sym.trim());
   const poolAsset = assetOf(w.pool);
   const divOn = w.holderOn || w.lpOn || w.bdOn;
   const feeTotal = (w.mktOn ? w.feeMkt : 0) + (w.buybackOn ? w.feeBb : 0) + w.feeLiq + (divOn ? w.feeSelf : 0);
   const feeOverflow = feeTotal !== 800;
+  // 进入部署步骤(step 3→4)前，项目机制(营销+回购+回流+分红)必须恰好合计 80%
+  const canNext = step === 0 ? Boolean(w.name.trim() && w.sym.trim())
+    : step === 3 ? !feeOverflow
+    : true;
   const wlCount = parseWl(w.wlAddrs).length;
 
   const validate = (): string | null => {
@@ -136,6 +140,7 @@ export default function CreateWizard() {
 
     setPhase("running");
     setErrMsg("");
+    setConfigDone(false);
     setResult({ ca: "", salt: "", txs: [] });
     setStages({ vanity: { state: "wait" }, commit: { state: "wait" }, deploy: { state: "wait" }, config: { state: "wait" }, verify: { state: "wait" } });
 
@@ -181,7 +186,44 @@ export default function CreateWizard() {
       setStage("commit", { state: "ok", info: predicted || "committed" });
 
       setStage("deploy", { state: "run" });
-      const depTx = await factory.launchProjectDeterministic(initCode, w.name, w.sym, w.dev, marketing, base, salt, addr!);
+      const duration = w.mode === "time" ? Math.round(w.durH * 3600) : 30 * 86400;
+      const rewardAddr = (o: string): string => {
+        if (o === "BNB") return wbnb;
+        if (o === "native") return ZeroAddress;
+        if (o === "pool") return resolvedBase;
+        return w.customCa;
+      };
+      // 分红机制三选一（持币=1 / 加池=2 / 燃烧=3）
+      const divId = w.holderOn ? 1 : w.lpOn ? 2 : w.bdOn ? 3 : 0;
+      const divReward = divId === 2 ? rewardAddr(w.lpToken) : rewardAddr(w.holderToken);
+      const divMin = divId === 2 ? parseUnits(String(w.lpMin), 0) : divId === 1 ? parseUnits(String(w.holderMin), 0) : 0n;
+      // 单笔原子交易：部署 + Mint/税率/税收分配/分红 全部一起上链，
+      // 任一步失败整笔回退，绝不留半配置状态。
+      const depTx = await factory.launchProjectDeterministicAndConfigure(
+        initCode, w.name, w.sym, w.dev, marketing, base, salt, addr!,
+        // mint
+        w.mode === "wl",
+        BigInt(Math.round(w.poolPercent * 10)),
+        1000n,
+        parseEther(String(w.minMint)),
+        parseEther(String(w.maxMint)),
+        parseEther(String(w.walletCap)),
+        parseEther(String(w.capBNB)),
+        duration,
+        // tax
+        BigInt(Math.round(w.buy * 10)),
+        BigInt(Math.round(w.sell * 10)),
+        BigInt(Math.round(w.transfer * 10)),
+        // fee distribution
+        BigInt(w.mktOn ? w.feeMkt : 0),
+        BigInt(w.buybackOn ? w.feeBb : 0),
+        BigInt(w.feeLiq),
+        BigInt(w.holderOn || w.lpOn || w.bdOn ? w.feeSelf : 0),
+        // dividend
+        divId,
+        divReward,
+        divMin,
+      );
       toast(`${t("wz_deploy")} · ${t("tx_sent")}`);
       const rc = await depTx.wait();
       txs.push(depTx.hash);
@@ -194,46 +236,9 @@ export default function CreateWizard() {
       }
       setResult({ ca: tokenAddr, salt, txs });
       setStage("deploy", { state: "ok", info: tokenAddr });
-
-      setStage("config", { state: "run" });
-      const duration = w.mode === "time" ? Math.round(w.durH * 3600) : 30 * 86400;
-      txs.push(await waitTx("configMint", factory.configMint(
-        tokenAddr,
-        w.mode === "wl",
-        BigInt(Math.round(w.poolPercent * 10)),
-        1000n,
-        parseEther(String(w.minMint)),
-        parseEther(String(w.maxMint)),
-        parseEther(String(w.walletCap)),
-        parseEther(String(w.capBNB)),
-        duration
-      )));
-      txs.push(await waitTx("configTax", factory.configTax(tokenAddr, BigInt(Math.round(w.buy * 10)), BigInt(Math.round(w.sell * 10)), BigInt(Math.round(w.transfer * 10)))));
-      txs.push(await waitTx("configFeeDistribution", factory.configFeeDistribution(
-        tokenAddr,
-        BigInt(w.mktOn ? w.feeMkt : 0),
-        BigInt(w.buybackOn ? w.feeBb : 0),
-        BigInt(w.feeLiq),
-        BigInt(w.holderOn || w.lpOn || w.bdOn ? w.feeSelf : 0),
-      )));
-
-      const rewardAddr = (o: string): string => {
-        if (o === "BNB") return wbnb;
-        if (o === "native") return ZeroAddress;
-        if (o === "pool") return resolvedBase;
-        return w.customCa;
-      };
-      if (w.holderOn) {
-        txs.push(await waitTx("configDiv(HOLD)", factory.configDiv(tokenAddr, 1, rewardAddr(w.holderToken), parseUnits(String(w.holderMin), 0), true)));
-      }
-      if (w.lpOn) {
-        txs.push(await waitTx("configDiv(LIQ)", factory.configDiv(tokenAddr, 2, rewardAddr(w.lpToken), parseUnits(String(w.lpMin), 0), true)));
-      }
-      if (w.bdOn) {
-        txs.push(await waitTx("configDiv(BURN)", factory.configDiv(tokenAddr, 3, rewardAddr(w.holderToken), 0n, true)));
-      }
-      setResult((r) => ({ ...r, txs }));
-      setStage("config", { state: "ok", info: `${txs.length - 2} tx` });
+      // 配置随部署原子完成，无需单独 config 步
+      setStage("config", { state: "ok", info: "atomic" });
+      setConfigDone(true);
 
       setStage("verify", { state: "run" });
       try {
@@ -297,6 +302,12 @@ export default function CreateWizard() {
           {metaError && (
             <div className="mx-auto mt-4 max-w-md rounded-xl border border-rosey/40 bg-rosey/8 px-4 py-3 text-left text-xs text-rosey">
               <Icon name="close" size={13} className="mr-1 inline" />代币已在链上创建成功，但<b>项目详情保存失败</b>（{metaError}）。可稍后从详情页重新补充介绍。
+            </div>
+          )}
+          {phase === "error" && !configDone && (
+            <div className="mx-auto mt-4 max-w-md rounded-xl border border-rosey/40 bg-rosey/8 px-4 py-3 text-left text-xs text-rosey">
+              <Icon name="close" size={13} className="mr-1 inline" />
+              <b>配置未完成</b>：代币已通过 CREATE2 部署上链，但后续初始化配置（Mint / 税率 / 税收分配 / 分红）交易失败。当前代币保留合约默认分配（营销 30% / 回购 20% / 流动性回流 20% / 分红 10%）。请勿视为完全发射，可联系平台管理员补充配置。
             </div>
           )}
           <div className="mx-auto mt-6 flex max-w-md flex-col gap-2.5">
@@ -634,6 +645,12 @@ export default function CreateWizard() {
                   </div>
                   <p className="text-[12px] leading-relaxed text-fog">{t("wz_burndiv_note")} · {t("wz_reward_token")}: {optLabel(w.holderToken)}</p>
                 </Tgl>
+
+                {feeOverflow && (
+                  <p className="mt-3 rounded-lg border border-rosey/40 bg-rosey/6 px-3 py-2 text-[11px] text-rosey">
+                    项目机制(营销+回购+回流+分红)必须合计 80%，当前 {((feeTotal) / 10).toFixed(1)}%（{feeTotal > 800 ? "超出" : "缺少"} {(Math.abs(800 - feeTotal) / 10).toFixed(1)}%）。请调整后再进入部署步骤。
+                  </p>
+                )}
               </div>
             )}
             {step === 4 && (

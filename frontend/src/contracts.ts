@@ -44,6 +44,7 @@ export const FACTORY_ABI = [
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
   "function launchProjectDeterministic(bytes,string,string,address,address,address,bytes32,address) returns (address)",
+  "function launchProjectDeterministicAndConfigure(bytes,string,string,address,address,address,bytes32,address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint8,address,uint256) returns (address)",
   "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
   "function configFeeDistribution(address,uint256,uint256,uint256,uint256)",
@@ -378,7 +379,8 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
       { fn: "transferTax", key: "transferTax" }, { fn: "baseToken", key: "baseToken" }, { fn: "pair", key: "pair" },
       { fn: "devWallet", key: "devWallet" }, { fn: "refundDeadline", key: "refundDeadline" },
       { fn: "marketingShare", key: "marketingShare" }, { fn: "buyBackShare", key: "buyBackShare" }, { fn: "liquidityBackflowShare", key: "liquidityBackflowShare" },
-      { fn: "divInfo", key: "div1", args: [1] }, { fn: "divInfo", key: "div3", args: [3] },
+      { fn: "dividendShare", key: "dividendShare" },
+      { fn: "divInfo", key: "div1", args: [1] }, { fn: "divInfo", key: "div2", args: [2] }, { fn: "divInfo", key: "div3", args: [3] },
     ];
     const F = fields.length;
     const res = await aggregate(
@@ -436,6 +438,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
       }
 
       const div1 = r.dec("div1").ok ? r.dec("div1").v : undefined;
+      const div2 = r.dec("div2").ok ? r.dec("div2").v : undefined;
       const div3 = r.dec("div3").ok ? r.dec("div3").v : undefined;
       const rewardLabel = (d: unknown[] | undefined): string => {
         const token = (d?.[1] as string) ?? "";
@@ -483,6 +486,8 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
           holder: div1 && (div1[0] as boolean) ? rewardLabel(div1) : "—",
           buyback: Number((g("buyBackShare") as bigint) ?? 0n) / 10,
           lp: Number((g("liquidityBackflowShare") as bigint) ?? 0n) / 10,
+          dv: Number((g("dividendShare") as bigint) ?? 0n) / 10,
+          divId: (div1?.[0] as boolean) ? 1 : (div2?.[0] as boolean) ? 2 : (div3?.[0] as boolean) ? 3 : 0,
           burndiv: (div3?.[0] as boolean) ?? false,
         },
         spark: [],

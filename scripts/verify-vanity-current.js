@@ -1,7 +1,7 @@
 const hre = require("hardhat");
 const { ethers } = hre;
 
-const FACTORY = process.env.FACTORY_ADDRESS || "0xCfd307a259181103Bf6A86Db8D4aaF48882eAAc1";
+const FACTORY = process.env.FACTORY_ADDRESS || "0xA9EE5CF589c848fd6d27bf8F85c7f0997085912a";
 
 async function main() {
   const [user] = await ethers.getSigners();

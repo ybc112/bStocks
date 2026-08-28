@@ -42,13 +42,17 @@ async function main() {
   await fac.setDeployer(await dep.getAddress());
   console.log("Deployer set on factory");
 
-  // Step 4: Predict a vanity address (example with salt = 1)
+  // Step 4: Predict a vanity address (example with salt = 1) via CREATE2:
+  //   address = keccak256(0xff ++ deployer ++ salt ++ keccak256(initCode))[12:]
   const salt = ethers.zeroPadValue(ethers.toBeHex(1), 32);
-  const predicted = await fac.predictTokenAddress(
-    "Test", "TST",
-    deployer.address, deployer.address,
-    ethers.ZeroAddress, salt
+  const StocksToken = await ethers.getContractFactory("StocksToken");
+  const encodedArgs = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["string", "string", "address", "address", "address", "address", "address"],
+    ["Test", "TST", await mr.getAddress(), await mf.getAddress(), deployer.address, deployer.address, ethers.ZeroAddress]
   );
+  const initCode = StocksToken.bytecode + encodedArgs.slice(2);
+  const initCodeHash = ethers.keccak256(initCode);
+  const predicted = ethers.getCreate2Address(await dep.getAddress(), salt, initCodeHash);
   console.log("Predicted address (salt=1):", predicted);
   console.log("Ends with 7777?", predicted.toLowerCase().endsWith("7777"));
 

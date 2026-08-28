@@ -31,7 +31,7 @@ export type Token = {
   price: number; chg: number; pool: string; mode: MintMode; poolRatio: number;
   tax: { b: number; s: number; t: number }; supplyBase: string;
   ca: string; dev: string; deadlineH: number; listAt?: string; color: string;
-  mech: { burn: number; mkt: number; holder: string; buyback: number; lp: number; burndiv: boolean };
+  mech: { burn: number; mkt: number; holder: string; buyback: number; lp: number; burndiv: boolean; dv?: number; divId?: number };
   spark: number[];
   refundTs?: number;
   mintLive?: boolean;
