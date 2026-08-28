@@ -524,7 +524,7 @@ export default function CreateWizard() {
                       { k: "feeMkt" as const, l: t("mech_mkt"), on: w.mktOn },
                       { k: "feeBb" as const, l: t("mech_buyback"), on: w.buybackOn },
                       { k: "feeLiq" as const, l: t("wz_liq_share"), on: true },
-                      { k: "feeSelf" as const, l: `${t("mech_holder")}·${t("opt_native")}`, on: divOn },
+                      { k: "feeSelf" as const, l: t("fee_self"), on: divOn },
                     ]).map((x) => (
                       <div key={x.k} className={x.on ? "" : "opacity-40"}>
                         <div className="flex items-baseline justify-between"><Lbl>{x.l}</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w[x.k] / 10).toFixed(1)}%</span></div>
@@ -533,7 +533,15 @@ export default function CreateWizard() {
                     ))}
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
-                    {feeOverflow ? "项目机制必须合计 80%，平台固定 20%" : "平台 20% + 项目机制 80% = 100%"}
+                    {feeOverflow ? "项目机制必须合计 80%，平台固定 20%" : "平台 20% + 营销 + 回购 + 回流 + 分红 = 100%"}
+                  </p>
+                  <p className="mt-1.5 text-[10.5px] text-fog">
+                    <Icon name="info" size={11} className="mr-1 inline text-gold" />
+                    {divOn
+                      ? `${t("fee_self_note")}（${
+                          w.holderOn ? t("mech_holder") : w.lpOn ? t("mech_lp") : t("mech_burndiv")
+                        }）`
+                      : t("fee_self_off")}
                   </p>
                 </div>
               </div>
