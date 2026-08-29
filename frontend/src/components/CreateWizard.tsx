@@ -191,11 +191,14 @@ export default function CreateWizard() {
         if (o === "BNB") return wbnb;
         if (o === "native") return ZeroAddress;
         if (o === "pool") return resolvedBase;
-        return w.customCa;
+        const ta = POOL_ASSETS.find((x) => x.sym === o);
+        if (ta) return ta.addr; // USDT / BTCB / 镜像资产等 → 链上地址
+        return isAddress(w.customCa) ? w.customCa : ZeroAddress; // custom / 兜底，绝不为空
       };
       // 分红机制三选一（持币=1 / 加池=2 / 燃烧=3）
       const divId = w.holderOn ? 1 : w.lpOn ? 2 : w.bdOn ? 3 : 0;
-      const divReward = divId === 2 ? rewardAddr(w.lpToken) : rewardAddr(w.holderToken);
+      // 未开分红时奖励代币传零地址，避免 ethers 解析空字符串报 UNCONFIGURED_NAME
+      const divReward = divId === 0 ? ZeroAddress : divId === 2 ? rewardAddr(w.lpToken) : rewardAddr(w.holderToken);
       const divMin = divId === 2 ? parseUnits(String(w.lpMin), 0) : divId === 1 ? parseUnits(String(w.holderMin), 0) : 0n;
       // 单笔原子交易：部署 + Mint/税率/税收分配/分红 全部一起上链，
       // 任一步失败整笔回退，绝不留半配置状态。
