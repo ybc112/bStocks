@@ -44,7 +44,7 @@ export const FACTORY_ABI = [
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
   "function launchProjectDeterministic(bytes,string,string,address,address,address,bytes32,address) returns (address)",
-  "function launchProjectDeterministicAndConfigure(bytes,string,string,address,address,address,bytes32,address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint8,address,uint256) returns (address)",
+  "function launchProjectDeterministicAndConfigure(bytes,string,string,address,address,address,bytes32,address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint8,address,uint256) returns (address)",
   "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
   "function configFeeDistribution(address,uint256,uint256,uint256,uint256)",
