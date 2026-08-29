@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon, Reveal, SectionHead, useI18n, useToast } from "./ui";
 import { useWallet } from "./Header";
 import { Contract } from "ethers";
@@ -191,7 +191,7 @@ export default function Referral() {
                 </div>
                 <div className="space-y-1.5">
                   {[
-                    { k: lang === "zh" ? "平台抽税" : "Platform cut", v: lang === "zh" ? "交易税点的 20%" : "20% of tax points" },
+                    { k: lang === "zh" ? "平台基金抽税" : "Platform fund cut", v: lang === "zh" ? "交易税点的 20%" : "20% of tax points" },
                     { k: lang === "zh" ? "社区维护" : "Community", v: "15% -> communityPool" },
                     { k: lang === "zh" ? "推广返佣" : "Referral", v: "5% = 3% L1 + 2% L2" },
                     { k: lang === "zh" ? "结算方式" : "Settlement", v: lang === "zh" ? "交易时实时到账(失败入储备)" : "Realtime on trade (reserve on fail)" },

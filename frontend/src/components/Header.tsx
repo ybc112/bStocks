@@ -216,9 +216,9 @@ export default function Header() {
             ))}
             <div className="mt-2 flex gap-2 border-t border-line pt-3">
               {[
-                { n: "x", href: "https://x.com/bstocks_pad" },
-                { n: "tg", href: "https://t.me/bstocks_pad" },
-                { n: "debox", href: "https://debox.pro/bstocks" },
+                { n: "x", href: "https://x.com/bstocks_binance/" },
+                { n: "tg", href: "https://t.me/bStocksLauchpad" },
+                { n: "debox", href: "https://m.debox.pro/group?id=eoawrnur&code=y3o8dduj" },
               ].map((s) => (
                 <a key={s.n} href={s.href} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-2 text-fog">
                   <Icon name={s.n} size={15} />

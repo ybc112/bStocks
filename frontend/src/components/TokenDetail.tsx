@@ -138,41 +138,66 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
     <Modal onClose={onClose} w="max-w-5xl">
       <div className="p-6 sm:p-8">
         {/* header */}
-        <div className="flex flex-wrap items-start gap-4 pr-10">
-          {avUrl && !avatarFail ? (
-            <img src={avUrl} alt={tk.sym}
-              onError={() => setAvatarFail(true)}
-              className="flex-none rounded-full border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
-              style={{ width: 56, height: 56 }} />
-          ) : (
-            <CoinIcon sym={tk.sym} color={tk.color} size={56} />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="font-disp text-2xl font-bold text-snow">{lang === "zh" ? tk.nameZh : tk.nameEn}</h2>
-              <span className="font-mono2 text-sm text-fog">${tk.sym}</span>
-              <span className="chip" style={{ borderColor: `${tk.color}55`, color: tk.color }}>
-                {t("pool_label")}: {tk.pool}
-              </span>
-            </div>
-            {(lang === "zh" ? tk.descZh : tk.descEn) && (
-              <p className="mt-2 max-w-xl text-[13.5px] leading-relaxed text-fog">{lang === "zh" ? tk.descZh : tk.descEn}</p>
+        <div className="relative overflow-hidden rounded-2xl border border-line bg-panel2/60 p-5 sm:p-6">
+          <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full opacity-60"
+            style={{ background: `radial-gradient(circle at center, ${tk.color}33, transparent 70%)`, filter: "blur(34px)" }} />
+          <div className="relative flex flex-wrap items-start gap-4">
+            {avUrl && !avatarFail ? (
+              <img src={avUrl} alt={tk.sym} onError={() => setAvatarFail(true)}
+                className="flex-none rounded-2xl border-2 border-gold/40 object-cover shadow-[0_0_18px_-4px_rgba(240,185,11,.5)]"
+                style={{ width: 64, height: 64 }} />
+            ) : (
+              <CoinIcon sym={tk.sym} color={tk.color} size={64} />
             )}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="chip"><span className="text-fog">{t("dt_ca")}</span><CopyBtn text={tk.ca} shortText={short(tk.ca)} /></span>
-              {tk.dev && <span className="chip"><span className="text-fog">{t("dt_dev_addr")}</span><CopyBtn text={tk.dev} shortText={short(tk.dev)} /></span>}
-              {tk.creator && <span className="chip"><span className="text-fog">Creator</span><CopyBtn text={tk.creator} shortText={short(tk.creator)} /></span>}
-              {tk.createdAt && (
-                <span className="chip"><span className="text-fog">{t("dt_created")}</span>
-                  <span className="font-mono2 text-[10.5px] text-snow">{new Date(tk.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-                </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                <h2 className="font-disp text-2xl font-bold text-snow">{lang === "zh" ? tk.nameZh : tk.nameEn}</h2>
+                <span className="font-mono2 text-sm text-fog">${tk.sym}</span>
+                {tk.pool && <span className="chip" style={{ borderColor: `${tk.color}55`, color: tk.color }}>{t("pool_label")}: {tk.pool}</span>}
+                {graduated ? (
+                  <span className="chip !border-mint/50 !text-mint"><Icon name="check" size={12} />{lang === "zh" ? "已毕业" : "Graduated"}</span>
+                ) : mintable ? (
+                  <span className="chip !border-cy/40 !text-cy"><Icon name="bolt" size={12} />{t("dt_mint_btn")}</span>
+                ) : null}
+              </div>
+              {(lang === "zh" ? tk.descZh : tk.descEn) && (
+                <p className="mt-2.5 max-w-2xl text-[13.5px] leading-relaxed text-fog/90">{lang === "zh" ? tk.descZh : tk.descEn}</p>
               )}
-              <a href={addrLink(tk.ca)} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="BscScan">
-                <Icon name="external" size={13} />
-              </a>
-              {tk.twitter && <a href={tk.twitter} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="X"><Icon name="x" size={13} /></a>}
-              {tk.tg && <a href={tk.tg} target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="Telegram"><Icon name="tg" size={13} /></a>}
-              <a href="https://debox.pro/bstocks" target="_blank" rel="noreferrer" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy" title="Debox"><Icon name="debox" size={13} /></a>
+            </div>
+          </div>
+
+          <div className="relative mt-5 grid gap-2.5 border-t border-line pt-4 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel/60 px-3 py-2">
+              <span className="text-[10.5px] uppercase tracking-wider text-fog">{t("dt_ca")}</span>
+              <span className="min-w-0"><CopyBtn text={tk.ca} shortText={short(tk.ca)} /></span>
+            </div>
+            {tk.dev && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel/60 px-3 py-2">
+                <span className="text-[10.5px] uppercase tracking-wider text-fog">{t("dt_dev_addr")}</span>
+                <span className="min-w-0"><CopyBtn text={tk.dev} shortText={short(tk.dev)} /></span>
+              </div>
+            )}
+            {tk.creator && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel/60 px-3 py-2">
+                <span className="text-[10.5px] uppercase tracking-wider text-fog">Creator</span>
+                <span className="min-w-0"><CopyBtn text={tk.creator} shortText={short(tk.creator)} /></span>
+              </div>
+            )}
+            {tk.createdAt && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel/60 px-3 py-2">
+                <span className="text-[10.5px] uppercase tracking-wider text-fog">{t("dt_created")}</span>
+                <span className="min-w-0 font-mono2 text-[11px] font-semibold text-snow">
+                  {new Date(tk.createdAt).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 sm:col-span-2">
+              <span className="mr-1 text-[10.5px] uppercase tracking-wider text-fog">{lang === "zh" ? "官方链接" : "Official Links"}</span>
+              <a href={addrLink(tk.ca)} target="_blank" rel="noreferrer" title="BscScan" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy"><Icon name="external" size={13} /></a>
+              {tk.twitter && <a href={tk.twitter} target="_blank" rel="noreferrer" title="X" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy"><Icon name="x" size={13} /></a>}
+              {tk.tg && <a href={tk.tg} target="_blank" rel="noreferrer" title="Telegram" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy"><Icon name="tg" size={13} /></a>}
+              <a href="https://m.debox.pro/group?id=eoawrnur&code=y3o8dduj" target="_blank" rel="noreferrer" title="Debox" className="rounded-lg border border-line p-1.5 text-fog transition hover:border-cy/60 hover:text-cy"><Icon name="debox" size={13} /></a>
             </div>
           </div>
         </div>
@@ -239,7 +264,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
               {isLive && (
                 <p className="mt-2.5 text-[10.5px] text-fog">
                   <Icon name="info" size={11} className="mr-1 inline text-gold" />
-                  {t("mech_total")}: {projSum}% (项目) + 20% (平台) = {projSum + 20}%
+                  {t("mech_total")}: {projSum}% (项目) + 20% (平台基金) = {projSum + 20}%
                 </p>
               )}
             </div>
