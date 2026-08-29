@@ -575,8 +575,8 @@ export default function CreateWizard() {
                   </div>
                   <p className={`mt-2 text-[10px] ${feeOverflow ? "font-bold text-rosey" : "text-fog"}`}>
                     {feeOverflow
-                      ? `项目机制必须合计 80%，当前 ${(feeTotal / 10).toFixed(1)}%（${feeTotal > 800 ? "超出" : "缺少"} ${(Math.abs(800 - feeTotal) / 10).toFixed(1)}%），平台基金 20%`
-                      : `平台基金 20% + 营销 ${(w.mktOn ? w.feeMkt : 0) / 10}% + 回购 ${(w.buybackOn ? w.feeBb : 0) / 10}% + 回流 ${w.feeLiq / 10}% + 分红 ${(divOn ? w.feeSelf : 0) / 10}% = 100%`}
+                      ? `项目机制必须合计 80%，当前 ${(feeTotal / 10).toFixed(1)}%（${feeTotal > 800 ? "超出" : "缺少"} ${(Math.abs(800 - feeTotal) / 10).toFixed(1)}%），市场基金 20%`
+                      : `市场基金 20% + 营销 ${(w.mktOn ? w.feeMkt : 0) / 10}% + 回购 ${(w.buybackOn ? w.feeBb : 0) / 10}% + 回流 ${w.feeLiq / 10}% + 分红 ${(divOn ? w.feeSelf : 0) / 10}% = 100%`}
                   </p>
                   <p className="mt-1.5 text-[10.5px] text-fog">
                     <Icon name="info" size={11} className="mr-1 inline text-gold" />
@@ -672,7 +672,7 @@ export default function CreateWizard() {
                       ["底池资产", `${poolAsset.sym} · ${poolAsset.name}`],
                       ["BNB 加池 / Dev", `${w.poolPercent}% / ${100 - w.poolPercent}%`],
                       [`${t("wz_buy")} / ${t("wz_sell")} / ${t("wz_transfer")}`, `${w.buy}% / ${w.sell}% / ${w.transfer}%`],
-                      ["税收分配 100%", `平台基金20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 回流${w.feeLiq / 10}% · 分红${(divOn ? w.feeSelf : 0) / 10}%`],
+                      ["税收分配 100%", `市场基金20% · 营销${(w.mktOn ? w.feeMkt : 0) / 10}% · 回购${(w.buybackOn ? w.feeBb : 0) / 10}% · 回流${w.feeLiq / 10}% · 分红${(divOn ? w.feeSelf : 0) / 10}%`],
                       [t("dt_mech_title"), [w.mktOn && `营销${w.feeMkt / 10}%`, w.buybackOn && `回购${w.feeBb / 10}%`, w.holderOn && `分红·${optLabel(w.holderToken)}`, w.lpOn && "加池分红", w.bdOn && "燃烧分红"].filter(Boolean).join(" · ") || "—"],
                     ].map(([k, v]) => (
                       <div key={k as string} className="flex items-baseline justify-between gap-4 border-b border-line/60 py-2">

@@ -264,7 +264,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
               {isLive && (
                 <p className="mt-2.5 text-[10.5px] text-fog">
                   <Icon name="info" size={11} className="mr-1 inline text-gold" />
-                  {t("mech_total")}: {projSum}% (项目) + 20% (平台基金) = {projSum + 20}%
+                  {t("mech_total")}: {projSum}% (项目) + 20% (市场基金) = {projSum + 20}%
                 </p>
               )}
             </div>
