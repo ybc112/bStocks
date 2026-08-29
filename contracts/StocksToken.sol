@@ -408,7 +408,7 @@ contract StocksToken {
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
 
-        if (tax > 0 && !_inSwap && pair != address(0) && balanceOf[address(this)] >= swapThreshold) {
+        if (tax > 0 && !_inSwap && pair != address(0) && balanceOf[address(this)] >= swapThreshold && !isPool[from] && !isPool[to]) {
             _processFees();
         }
     }
@@ -719,5 +719,14 @@ contract StocksToken {
         require(amount <= address(this).balance - reserved, "BAL");
         (bool ok,) = payable(msg.sender).call{value: amount}("");
         require(ok, "WIT");
+    }
+
+    // 在非"池内转账"的安全时机把累计的税收益(营销/回购/回流/分红/平台)真正分发出去。
+    //   - 买卖等池内转账不会再触发 _processFees(避免再入被锁的池),税币先留在合约;
+    //   - 任何钱包可在此处(或下一次普通 P2P 转账)触发,池未被占用时安全。
+    function flushFeeReserves() external nonReentrant {
+        require(pair != address(0), "NOPAIR");
+        if (_inSwap) return;
+        _processFees();
     }
 }
