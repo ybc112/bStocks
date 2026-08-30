@@ -408,7 +408,7 @@ contract StocksToken {
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
 
-        if (tax > 0 && !_inSwap && pair != address(0) && balanceOf[address(this)] >= swapThreshold && !isPool[from] && !isPool[to]) {
+        if (tax > 0 && !_inSwap && pair != address(0) && balanceOf[address(this)] >= swapThreshold && !isPool[from]) {
             _processFees();
         }
     }
