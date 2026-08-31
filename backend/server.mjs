@@ -399,8 +399,10 @@ app.post("/api/verify/submit", async (req, res) => {
   for (const [label, value] of Object.entries({ router, factory, dev, marketing, baseToken })) {
     if (!value || !ethers.isAddress(value)) return res.status(400).json({ error: `Invalid ${label} address` });
   }
-  if (FACTORY_ADDRESS && factory.toLowerCase() !== FACTORY_ADDRESS.toLowerCase()) {
-    return res.status(400).json({ error: "factory does not match configured factory" });
+  // `factory` is the Pancake V2 ERC20-factory (constructor arg), NOT the launchpad
+  // factory. Only require it be a valid address; do not compare it to FACTORY_ADDRESS.
+  if (!FACTORY_ADDRESS) {
+    return res.status(500).json({ error: "FACTORY_ADDRESS not configured on server" });
   }
 
   if (!BSCSCAN_API_KEY) {

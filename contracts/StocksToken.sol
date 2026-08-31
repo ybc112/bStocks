@@ -280,6 +280,9 @@ contract StocksToken {
             (bool ok,) = payable(devWallet).call{value: rest}("");
             if (ok) rest = 0;
         }
+        // 打满即丢权限：所有权 renounce 到黑洞地址，发射后任何人(含 Factory/创始人)都不可再改配置。
+        owner = DEAD;
+        pendingOwner = address(0);
         emit Graduated(totalMintedBNB, lpBal, address(this).balance);
     }
 
@@ -429,9 +432,13 @@ contract StocksToken {
         }
         _inSwap = true;
         uint256 before = address(this).balance;
-        router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
+        try router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300) {
+            bnb = address(this).balance - before;
+        } catch {
+            // Thin pools must not block a user's trade.
+            bnb = 0;
+        }
         _inSwap = false;
-        bnb = address(this).balance - before;
     }
 
     // Allocate the FULL tax (permille = 1000) precisely:
@@ -457,11 +464,10 @@ contract StocksToken {
         uint256 bfBnB = _swapTokensToBNB(bfTokenHalf);
 
         if (platformBnB > 0 && launchpad != address(0)) {
-            ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB);
+            try ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB) {} catch {}
         }
         if (mktBnB > 0 && marketingWallet != address(0)) {
-            (bool ok,) = payable(marketingWallet).call{value: mktBnB}("");
-            require(ok);
+            payable(marketingWallet).call{value: mktBnB}("");
         }
         if (bbBnB > 0) _buyBackAndBurn(bbBnB);
         if (bfBnB > 0 && bfTokenHalf > 0) _backfillLiquidity(bfBnB, bfTokenHalf);
@@ -481,9 +487,10 @@ contract StocksToken {
                         rp[0] = WBNB;
                         rp[1] = reward;
                         _inSwap = true;
-                        router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300);
+                        try router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300) {} catch {}
                         _inSwap = false;
-                        _creditDividend(activeDiv, IERC20External(reward).balanceOf(address(this)) - beforeRew);
+                        uint256 got = IERC20External(reward).balanceOf(address(this)) - beforeRew;
+                        if (got > 0) _creditDividend(activeDiv, got);
                     }
                 }
             }
@@ -497,9 +504,12 @@ contract StocksToken {
         address[] memory path = new address[](2);
         path[0] = WBNB;
         path[1] = address(this);
-        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300);
+        try router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300) {
+            emit BuyBackAndBurn(bnbIn, bnbIn);
+        } catch {
+            // Swallow: failed buyback never blocks the user's trade.
+        }
         _inSwap = false;
-        emit BuyBackAndBurn(bnbIn, bnbIn);
     }
 
     // Liquidity backflow: pair kept token half + swapped-BNB half, LP goes to DEAD.
@@ -509,17 +519,18 @@ contract StocksToken {
         _inSwap = true;
         if (baseToken == WBNB) {
             allowance[address(this)][address(router)] = type(uint256).max;
-            router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300);
+            try router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300) {} catch {}
         } else {
             address[] memory path = new address[](2);
             path[0] = WBNB;
             path[1] = baseToken;
             uint256 baseBefore = IERC20External(baseToken).balanceOf(address(this));
-            router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300);
+            try router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300) {} catch {}
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
-            require(baseBal > 0);
-            allowanceRouter(baseToken);
-            router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300);
+            if (baseBal > 0) {
+                allowanceRouter(baseToken);
+                try router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300) {} catch {}
+            }
         }
         _inSwap = false;
     }
