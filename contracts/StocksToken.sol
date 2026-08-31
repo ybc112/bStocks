@@ -140,7 +140,7 @@ contract StocksToken {
     uint256 public maxMint;
     uint256 public walletCap;
     uint256 public capBNB;
-    uint256 public minCapBNB = 0.1 ether;
+    uint256 public minCapBNB = 0.001 ether;
     uint256 public mintStart;
     uint256 public mintEnd;
     uint256 public refundDeadline;
@@ -177,7 +177,7 @@ contract StocksToken {
         emit MintConfigSet(cap, poolPct);
     }
     function setWhitelist(address[] calldata addrs, bool f) external onlyOwner { for (uint256 i = 0; i < addrs.length; i++) whitelist[addrs[i]] = f; }
-    function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.1 ether, "GT"); minCapBNB = t; }
+    function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.001 ether, "GT"); minCapBNB = t; }
 
     receive() external payable {
         if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB) swapIn(msg.value);
