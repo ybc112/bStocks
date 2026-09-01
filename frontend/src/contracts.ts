@@ -6,10 +6,10 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0x2c6F9E7b3034c911a3ADC066cbEe072606031ca2";
+export const ENV_FACTORY: string = "0x7245Ee8be169564929e2A020A082b9968FCe6D14";
 
-export const PANCAKE_ROUTER = "0xD99D1c33F9fC3444f8101754aBC46c52416550D1";
-export const PANCAKE_FACTORY = "0x6725F303b657a9451d8BA641348b6761A6CC7a17";
+export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
+export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
 
 let cachedFactory = ENV_FACTORY;
 
