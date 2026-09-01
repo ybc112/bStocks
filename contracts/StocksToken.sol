@@ -494,11 +494,9 @@ contract StocksToken {
     function _processFees() internal {
         uint256 free = _feeBucketsTotal();
         if (free == 0) return;
-        // 回流剂量：按累计税桶的 10% 一次性回流(参考合约按卖单比例回流)，
-        // 保底至少换 swapThreshold 一小块；绝不超卖(amt<=free)。
-        // 修复"税代币大批堆积但不结算"——旧实现固定只啃 1e24，堆积再多分红也积累不起来。
-        uint256 amt = free / 10;
-        if (amt < swapThreshold) amt = free > swapThreshold ? swapThreshold : free;
+        // 一次把整把税代币换光(对齐参考合约:大卖可一次结算全部积累)，不堆积；
+        // 换出的 BNB 再按千分比拆给 平台/营销/买返/回流/分红。
+        uint256 amt = free;
         uint256 total = TAX_DIVISOR;
         uint8 activeDiv = _activeDivId();
         bool nativeDiv = activeDiv != 0 && _divs[activeDiv].rewardToken == address(0);
@@ -549,6 +547,8 @@ contract StocksToken {
         if (bfBnB > 0 && bfTokenHalf > 0) _backfillLiquidity(bfBnB, bfTokenHalf);
 
         if (activeDiv != 0) {
+            // 自动派发：把刚积累的分红尽量分给所有持有人(对齐参考合约 process)
+            _processDividends(activeDiv, 100);
             if (nativeDiv) {
                 _creditDividend(activeDiv, divBnB);
             } else {
@@ -565,6 +565,7 @@ contract StocksToken {
                     if (got > 0) _creditDividend(activeDiv, got);
                 }
             }
+            _processDividends(activeDiv, 100);
         }
         emit FeesProcessed(amt, 0);
     }
@@ -633,6 +634,9 @@ contract StocksToken {
         uint256 accPerShare;
         uint256 totalShares;
         uint256 pendingReward;
+        uint256 cursor;                       // 自动派发的游标
+        address[] holders;                    // 有分红的持有人队列
+        mapping(address => bool) inHolders;   // 是否在队列
         mapping(address => uint256) shares;
         mapping(address => uint256) paidPerShare;
     }
@@ -686,6 +690,7 @@ contract StocksToken {
             if (next < d.minEligible) return;
             d.totalShares += next;
             d.paidPerShare[account] = (next * d.accPerShare) / DIV_PRECISION;
+            _divHoldersPush(id, account);   // 达到门槛 -> 进自动派发队列
         } else {
             d.totalShares += amount;
             d.paidPerShare[account] += (amount * d.accPerShare) / DIV_PRECISION;
@@ -717,11 +722,69 @@ contract StocksToken {
         return 0;
     }
 
+    // ---- 持有人队列（用于自动派发，对齐参考合约 process(gas)）----
+    function _divHoldersPush(uint8 id, address acct) internal {
+        DivData storage d = _divs[id];
+        if (d.inHolders[acct]) return;
+        d.inHolders[acct] = true;
+        d.holders.push(acct);
+    }
+    function _divHoldersRemove(uint8 id, address acct) internal {
+        DivData storage d = _divs[id];
+        if (!d.inHolders[acct]) return;
+        d.inHolders[acct] = false;
+        uint256 n = d.holders.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (d.holders[i] == acct) { d.holders[i] = d.holders[n - 1]; d.holders.pop(); break; }
+        }
+    }
+    function _dividendDue(DivData storage d, address acct) internal view returns (uint256 due) {
+        uint256 s = d.shares[acct];
+        if (s == 0) return 0;
+        uint256 gross = (s * d.accPerShare) / DIV_PRECISION;
+        due = gross > d.paidPerShare[acct] ? gross - d.paidPerShare[acct] : 0;
+    }
+    // 软派发：某持有人收不到时不回退整批，留到下次再发
+    function _tryPayout(uint8 id, address user, uint256 amount) internal returns (bool) {
+        if (amount == 0) return true;
+        DivData storage d = _divs[id];
+        if (d.rewardToken == address(0)) {
+            balanceOf[address(this)] -= amount;
+            balanceOf[user] += amount;
+            emit Transfer(address(this), user, amount);
+            return true;
+        } else if (d.rewardToken == WBNB) {
+            (bool ok,) = payable(user).call{value: amount}("");
+            return ok;
+        } else {
+            try IERC20External(d.rewardToken).transfer(user, amount) returns (bool ok) { return ok; } catch { return false; }
+        }
+    }
+    // 自动派发：每次最多处理 maxIter 个持有人，用游标续跑（参考合约 process）
+    function _processDividends(uint8 id, uint256 maxIter) internal {
+        DivData storage d = _divs[id];
+        if (!d.enabled) return;
+        uint256 n = d.holders.length;
+        if (n == 0) return;
+        for (uint256 i = 0; i < maxIter && d.cursor < n; i++) {
+            address a = d.holders[d.cursor];
+            if (a != address(0) && !excludedFromDividends[a]) {
+                uint256 due = _dividendDue(d, a);
+                if (due > 0 && d.pendingReward >= due) {
+                    if (_tryPayout(id, a, due)) { d.paidPerShare[a] = due + d.paidPerShare[a]; d.pendingReward -= due; }
+                }
+            }
+            d.cursor++;
+        }
+        if (d.cursor >= n) d.cursor = 0;
+    }
+
     function depositDiv(uint8 id) external payable nonReentrant {
         DivData storage d = _divs[id];
         require(d.rewardToken == WBNB);
         require(d.enabled, "OFF");
         _creditDividend(id, msg.value);
+        _processDividends(id, 100);
     }
 
     function depositDivToken(uint8 id, address token, uint256 amount) external nonReentrant {
@@ -730,6 +793,7 @@ contract StocksToken {
         require(d.enabled, "OFF");
         (bool s,) = address(token).call(abi.encodeWithSelector(0x23b872dd, msg.sender, address(this), amount)); require(s, "TF");
         _creditDividend(id, amount);
+        _processDividends(id, 100);
     }
 
     function claimDiv(uint8 id) external nonReentrant {
@@ -787,7 +851,7 @@ contract StocksToken {
         if (!d.enabled) return;
         if (excludedFromDividends[user]) { // 黑洞/池子/锁仓/交易所：份额清零、不参与
             uint256 oldEx = d.shares[user];
-            if (oldEx != 0) { d.totalShares -= oldEx; d.shares[user] = 0; d.paidPerShare[user] = 0; }
+            if (oldEx != 0) { d.totalShares -= oldEx; d.shares[user] = 0; d.paidPerShare[user] = 0; _divHoldersRemove(DIV_HOLD, user); }
             return;
         }
         uint256 newShare = balanceOf[user] >= d.minEligible ? balanceOf[user] : 0;
@@ -796,6 +860,8 @@ contract StocksToken {
         d.totalShares = d.totalShares - old + newShare;
         d.shares[user] = newShare;
         d.paidPerShare[user] = (newShare * d.accPerShare) / DIV_PRECISION;
+        if (newShare > 0 && old == 0) _divHoldersPush(DIV_HOLD, user);
+        else if (newShare == 0 && old > 0) _divHoldersRemove(DIV_HOLD, user);
     }
 
     function burnDiv(uint256 amount) external nonReentrant {
