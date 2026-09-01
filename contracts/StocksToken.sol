@@ -226,16 +226,27 @@ contract StocksToken {
         mintTokensDistributed += tokens;
         emit Transfer(address(this), msg.sender, tokens);
 
-        // 100% of each mint's BNB pairs with the LP reserve (matches the reference
-        // launchpad) so the pool always keeps full real depth for buy/sell even at
-        // tiny mint amounts. Dev is funded via sell fees instead of a mint cut.
-        uint256 lpBNB = use;
-        totalPoolBNB += lpBNB;
-        mintedPoolBNB[msg.sender] += lpBNB;
+        // BNB split per the launch config (poolPercent): poolPercent% enters the
+        // pool, the rest goes to the dev wallet now. Only the pool-entered BNB is
+        // refundable; the dev cut is not (matches the refund() comment). LP tokens
+        // pair 1:1 with the BNB that actually entered the pool, keeping the ratio
+        // constant across mints (frontend default poolPercent = 60).
+        uint256 poolBNB = (use * poolPercent) / TAX_DIVISOR;
+        uint256 devBNB = use - poolBNB;
+        totalPoolBNB += poolBNB;
+        mintedPoolBNB[msg.sender] += poolBNB;
 
         uint256 lpTokens = last ? MINT_RESERVE - lpTokensDistributed : (MINT_RESERVE * use) / capBNB;
         mintedLPTokenAmount[msg.sender] += lpTokens;
-        _addLiquidityLive(lpBNB, lpTokens);
+        _addLiquidityLive(poolBNB, lpTokens);
+
+        // Non-blocking: if the dev transfer fails, the BNB stays in the contract
+        // and graduation forwards it to the dev wallet anyway.
+        if (devBNB > 0) {
+            address devRecv = devWallet == address(0) ? owner : devWallet;
+            (bool ok,) = payable(devRecv).call{value: devBNB}("");
+            if (ok) {} // dev cut handled
+        }
 
         if (last) _graduate();
 
