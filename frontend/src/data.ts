@@ -1,7 +1,7 @@
 export type PoolAsset = { sym: string; name: string; nameEn: string; addr: string; color: string };
 
 export const POOL_ASSETS: PoolAsset[] = [
-  { sym: "BNB", name: "币安币", nameEn: "BNB Chain (Testnet)", addr: "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd", color: "#F0B90B" },
+  { sym: "BNB", name: "BNB", nameEn: "BNB Chain", addr: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", color: "#F0B90B" },
   { sym: "USDT", name: "泰达美元", nameEn: "Tether USD", addr: "0x55d398326f99059ff775485246999027b3197955", color: "#26A17B" },
   { sym: "USD1", name: "USD1 稳定币", nameEn: "USD1 Stable", addr: "0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d", color: "#3D7BFF" },
   { sym: "SPCXB", name: "SpaceX 镜像", nameEn: "SpaceX Mirror", addr: "0xbe9d156892e55e7154bcd3cb0fea677f9d3103e1", color: "#5CC8FF" },
