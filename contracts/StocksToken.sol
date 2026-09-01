@@ -493,8 +493,12 @@ contract StocksToken {
     // platform 200 ; project shares sum to 800. Each share swaps its own tokens.
     function _processFees() internal {
         uint256 free = _feeBucketsTotal();
-        if (free < swapThreshold) return;
-        uint256 amt = swapThreshold;
+        if (free == 0) return;
+        // 回流剂量：按累计税桶的 10% 一次性回流(参考合约按卖单比例回流)，
+        // 保底至少换 swapThreshold 一小块；绝不超卖(amt<=free)。
+        // 修复"税代币大批堆积但不结算"——旧实现固定只啃 1e24，堆积再多分红也积累不起来。
+        uint256 amt = free / 10;
+        if (amt < swapThreshold) amt = free > swapThreshold ? swapThreshold : free;
         uint256 total = TAX_DIVISOR;
         uint8 activeDiv = _activeDivId();
         bool nativeDiv = activeDiv != 0 && _divs[activeDiv].rewardToken == address(0);
