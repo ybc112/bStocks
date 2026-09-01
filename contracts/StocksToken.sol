@@ -417,6 +417,19 @@ contract StocksToken {
             tokensForLiquidityBackflow += (tax * liquidityBackflowShare) / TAX_DIVISOR;
             tokensForDividends += (tax * dividendShare) / TAX_DIVISOR;
         }
+
+        // CRITICAL: flush fees BEFORE writing the user's net into the pool.
+        // PancakeRouter's *SupportingFeeOnTransferTokens path measures the sell input as
+        //   pairTokenBalance - reserveIn AFTER the transferFrom.
+        // If we deposit the user's net into the pool first and then run the fee flush,
+        // the flush's own pair.swap()/_update() advances reserveIn past the user's deposit,
+        // so the router measures an input delta of 0 and reverts every DEX sell with
+        // "PancakeLibrary: INSUFFICIENT_INPUT_AMOUNT". Flushing first (matching the
+        // reference launchpad) leaves reserveIn behind the user deposit -> delta > 0.
+        if (tax > 0 && !_inSwap && pair != address(0) && _feeBucketsTotal() >= swapThreshold && !isPool[from]) {
+            try this.processFees() {} catch {}
+        }
+
         balanceOf[to] += net;
         emit Transfer(from, to, net);
         if (tax > 0) emit Transfer(from, address(this), tax);
@@ -428,13 +441,6 @@ contract StocksToken {
 
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
-
-        if (tax > 0 && !_inSwap && pair != address(0) && _feeBucketsTotal() >= swapThreshold && !isPool[from]) {
-            // Reference-style: external self-call wrapped in try/catch so a failed fee
-            // flush is atomic (all-or-nothing) and swallowed — it can never corrupt the
-            // in-flight AMM swap or block a user's trade on a thin pool.
-            try this.processFees() {} catch {}
-        }
     }
 
     // Loopback to turn a token chunk into BNB via the active pool.

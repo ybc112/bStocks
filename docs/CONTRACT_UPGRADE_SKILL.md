@@ -16,6 +16,7 @@
 - 分红 HOLD/LIQ/BURN 互斥。
 - `minCapBNB` 已降到 `0.001 ether`（支持 0.01 打款）。
 - 卖出清税**必须非阻断**（`_processFees` 内部 swap 全部 `try/catch`），否则薄池会整笔回退。
+- **清税必须在「把用户净额记入池子」之前执行**（顺序铁律）。若先记净额再 flush，flush 的 `pair._update()` 会把 reserve 推进到已含用户净额，Pancake Router 的 `*SupportingFeeOnTransferTokens` 计量输入增量=0 → 每笔卖出 `PancakeLibrary: INSUFFICIENT_INPUT_AMOUNT`。参照合约 `Smiley` 正是「先 `swapTokenForFund`，后 `_tokenTransfer`」。
 - 打满即 `owner = DEAD`（自动丢权限）。
 
 ---
@@ -139,7 +140,7 @@ NEW_DEPLOYER.tokenCreationCodeHash == 新 creationHash，tokenCreationCodeLength
 | `CreateFailed` (0x7e16b8cd) | 前端/服务器 `initCode` 与链上 deployer 的 creationCode 不一致 | 重编译 → 重部署 → 同步服务器 → 清前端缓存 |
 | `DIST80` | 税收四项之和 ≠ 800 | 改参数再发射 |
 | `VANITY` | 代币地址尾号非 bbbb | 重搜盐 |
-| `Pancake:K` / 卖出整笔回退 | 池子太薄 or 清税重入 | 加池子深度 / 提高 swapThreshold |
+| `Pancake:K` / 卖出整笔回退 | 池子太薄 或 清税重入 或 清税时机在记净额之后（`INSUFFICIENT_INPUT_AMOUNT`） | 加池子深度 / 提高 swapThreshold / **清税挪到记净额之前**（顺序铁律，见 §0） |
 | 自动开源 `does NOT match` | build-info 选错（旧字节码） | 见 §7-3，清服务器 build-info |
 | 自动开源 `Unable to locate ContractCode` | BscScan 索引未就绪 | 已自动重试；或稍后手动重提 |
 
