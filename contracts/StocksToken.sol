@@ -453,12 +453,11 @@ contract StocksToken {
         }
         _inSwap = true;
         uint256 before = address(this).balance;
-        try router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300) {
-            bnb = address(this).balance - before;
-        } catch {
-            // Thin pools must not block a user's trade.
-            bnb = 0;
-        }
+        // Atomic (no internal catch): if this can't complete, the WHOLE fee-flush
+        // rolls back wholesale and the user's sell proceeds on an untouched pool —
+        // exactly how the reference launchpad keeps trades alive on thin pools.
+        router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
+        bnb = address(this).balance - before;
         _inSwap = false;
     }
 
@@ -523,7 +522,7 @@ contract StocksToken {
                         rp[0] = WBNB;
                         rp[1] = reward;
                         _inSwap = true;
-                        try router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300) {} catch {}
+                        router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300);
                         _inSwap = false;
                         uint256 got = IERC20External(reward).balanceOf(address(this)) - beforeRew;
                         if (got > 0) _creditDividend(activeDiv, got);
@@ -556,11 +555,8 @@ contract StocksToken {
         address[] memory path = new address[](2);
         path[0] = WBNB;
         path[1] = address(this);
-        try router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300) {
-            emit BuyBackAndBurn(bnbIn, bnbIn);
-        } catch {
-            // Swallow: failed buyback never blocks the user's trade.
-        }
+        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300);
+        emit BuyBackAndBurn(bnbIn, bnbIn);
         _inSwap = false;
     }
 
@@ -571,17 +567,17 @@ contract StocksToken {
         _inSwap = true;
         if (baseToken == WBNB) {
             allowance[address(this)][address(router)] = type(uint256).max;
-            try router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300) {} catch {}
+            router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300);
         } else {
             address[] memory path = new address[](2);
             path[0] = WBNB;
             path[1] = baseToken;
             uint256 baseBefore = IERC20External(baseToken).balanceOf(address(this));
-            try router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300) {} catch {}
+            router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300);
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
             if (baseBal > 0) {
                 allowanceRouter(baseToken);
-                try router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300) {} catch {}
+                router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300);
             }
         }
         _inSwap = false;

@@ -78,21 +78,23 @@ async function submitVerification({ address, contractName, constructorArgsHex })
     constructorArguments: constructorArgsHex || "", licenseType: 3,
   });
   // A freshly-deployed contract may not be indexed by BscScan yet, which returns
-  // "Unable to locate ContractCode". Retry briefly before giving up.
+  // "Unable to locate ContractCode". Retry with backoff until it's indexed
+  // (usually < 60s), so a just-launched token verifies automatically.
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  for (let attempt = 0; attempt < 4; attempt++) {
+  const backoff = [5, 8, 12, 16, 20, 25, 30, 35, 40, 45];
+  for (let attempt = 0; attempt < backoff.length + 1; attempt++) {
     try {
       const response = await fetch(`${ETHERSCAN_API}?chainid=${encodeURIComponent(String(CHAIN_ID))}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
       const data = await response.json();
       const msg = String(data.result || "");
-      if (data.status === "1" && msg && msg.includes("Unable to locate ContractCode") && attempt < 3) {
-        await sleep(4000);
+      if (data.status === "1" && msg && msg.includes("Unable to locate ContractCode") && attempt < backoff.length) {
+        await sleep(backoff[attempt] * 1000);
         continue;
       }
       return { kind: "result", status: data.status === "1" ? "submitted" : "failed", guid: data.result || null, error: data.status !== "1" ? data.result : null };
     } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
   }
-  return { kind: "error", status: "failed", guid: null, error: "verification retry exhausted" };
+  return { kind: "result", status: "failed", guid: null, error: "Unable to locate ContractCode after " + (backoff.reduce((a, b) => a + b, 0)) + "s retries" };
 }
 
 // ---- Avatar upload config ----
