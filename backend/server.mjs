@@ -81,7 +81,7 @@ async function submitVerification({ address, contractName, constructorArgsHex })
   // "Unable to locate ContractCode". Retry with backoff until it's indexed
   // (usually < 60s), so a just-launched token verifies automatically.
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const backoff = [5, 8, 12, 16, 20, 25, 30, 35, 40, 45];
+  const backoff = [4, 6, 8, 10];
   for (let attempt = 0; attempt < backoff.length + 1; attempt++) {
     try {
       const response = await fetch(`${ETHERSCAN_API}?chainid=${encodeURIComponent(String(CHAIN_ID))}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
@@ -95,6 +95,68 @@ async function submitVerification({ address, contractName, constructorArgsHex })
     } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
   }
   return { kind: "result", status: "failed", guid: null, error: "Unable to locate ContractCode after " + (backoff.reduce((a, b) => a + b, 0)) + "s retries" };
+}
+
+// ---- Background auto-verification ----
+// A freshly-deployed token isn't indexed by BscScan for several seconds, so a
+// synchronous submit right after deploy hits "Unable to locate ContractCode".
+// Instead of blocking the request (which can time out the client), we register a
+// background job that keeps re-submitting + polling until BscScan verifies it.
+const backgroundVerify = {}; // key(lowercased tokenAddr) -> { started, guid }
+
+function gotRealGuid(data) {
+  return data && data.status === "submitted" && data.guid && !String(data.guid).includes("Unable to locate");
+}
+function updateTokenRec(key, patch) {
+  const r = tokenVerifications.find((x) => String(x.tokenAddress).toLowerCase() === key);
+  if (r) Object.assign(r, patch);
+  else tokenVerifications.push(Object.assign({ tokenAddress: key, timestamp: Date.now() }, patch));
+}
+async function checkVerifyStatus(guid) {
+  try {
+    const params = new URLSearchParams({ chainid: String(CHAIN_ID), apikey: BSCSCAN_API_KEY, module: "contract", action: "checkverifystatus", guid });
+    const j = await (await fetch(`${ETHERSCAN_API}?${params.toString()}`)).json();
+    return j.status === "1" ? "verified" : ("pending:" + (j.result || ""));
+  } catch { return "pending"; }
+}
+function startBackgroundVerify(tokenAddress, constructorArgsHex) {
+  const key = String(tokenAddress).toLowerCase();
+  const job = backgroundVerify[key];
+  if (job && Date.now() - job.started < 20 * 60 * 1000) return job; // already running
+  const entry = { started: Date.now(), guid: null };
+  backgroundVerify[key] = entry;
+  const loop = async () => {
+    if (Date.now() - entry.started > 20 * 60 * 1000) { delete backgroundVerify[key]; return; }
+    try {
+      const data = await submitVerification({ address: tokenAddress, contractName: "contracts/StocksToken.sol:StocksToken", constructorArgsHex });
+      if (gotRealGuid(data)) {
+        entry.guid = data.guid;
+        updateTokenRec(key, { verificationStatus: "submitted", verificationGuid: data.guid, verificationError: null });
+        saveVerifyStore();
+        const poll = async () => {
+          const st = await checkVerifyStatus(data.guid);
+          if (st === "verified") {
+            updateTokenRec(key, { verificationStatus: "verified", verificationGuid: data.guid, verificationError: null });
+            saveVerifyStore(); delete backgroundVerify[key];
+          } else if (!st.startsWith("Fail")) {
+            setTimeout(poll, 10000);
+          } else {
+            updateTokenRec(key, { verificationStatus: "failed", verificationGuid: data.guid, verificationError: st });
+            saveVerifyStore(); delete backgroundVerify[key];
+          }
+        };
+        setTimeout(poll, 8000);
+        return;
+      }
+    } catch {}
+    if (!entry.guid) setTimeout(loop, 25000); else delete backgroundVerify[key];
+  };
+  setTimeout(loop, 8000);
+  return entry;
+}
+
+function msgIsPending(errText, guidText) {
+  return String(errText || "").includes("Unable to locate") || String(guidText || "").includes("Unable to locate");
 }
 
 // ---- Avatar upload config ----
@@ -443,17 +505,20 @@ app.post("/api/verify/submit", async (req, res) => {
 
     // Submit to Etherscan V2
     const data = await submitVerification({ address: tokenAddress, contractName: "contracts/StocksToken.sol:StocksToken", constructorArgsHex: constructorArgs });
+    const got = gotRealGuid(data);
+    const pending = msgIsPending(data.error, data.guid);
     const deployment = {
       tokenAddress,
       name,
       symbol,
       timestamp: Date.now(),
-      verificationStatus: data.status,
-      verificationGuid: data.guid,
-      verificationError: data.error,
+      verificationStatus: got ? "submitted" : (pending ? "pending" : "failed"),
+      verificationGuid: got ? data.guid : null,
+      verificationError: got || pending ? (pending ? "BscScan 索引中，后台自动重试校验…" : null) : data.error,
     };
     tokenVerifications.push(deployment);
     saveVerifyStore();
+    if (pending) startBackgroundVerify(tokenAddress, constructorArgs);
     res.json(deployment);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -488,6 +553,14 @@ app.get("/api/verify/status/:guid", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Poll latest verification record for a token (frontend auto-verify polling)
+app.get("/api/verify/by-address/:address", (req, res) => {
+  const a = String(req.params.address || "").toLowerCase();
+  const rec = tokenVerifications.find((r) => String(r.tokenAddress).toLowerCase() === a);
+  if (!rec) return res.status(404).json({ error: "not found" });
+  res.json(rec);
 });
 
 // Get deployment / verification history

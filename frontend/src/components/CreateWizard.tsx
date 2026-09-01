@@ -8,7 +8,7 @@ import { CoinIcon, CopyBtn, Icon, Reveal, SectionHead, useI18n, useToast } from 
 import { useWallet } from "./Header";
 import { readOnlyProvider, txLink, addrLink } from "../web3";
 import {
-  FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, searchVanityLocal, tokenInitCode, verifySubmit, resolveFactoryAddress,
+  FACTORY_ABI, DEPLOYER_ABI, factoryIface, computeCommitment, searchVanityLocal, tokenInitCode, verifySubmit, verifyStatusByAddress, resolveFactoryAddress,
   uploadAvatarForToken, saveProjectMeta,
 } from "../contracts";
 
@@ -247,6 +247,22 @@ export default function CreateWizard() {
       try {
         const v = await verifySubmit({ tokenAddress: tokenAddr, name: w.name, symbol: w.sym, router, factory: pfactory, dev: w.dev, marketing, baseToken: resolvedBase });
         setStage("verify", { state: "ok", info: v.verificationStatus });
+        // If BscScan hasn't indexed it yet, the backend returns "pending" and keeps
+        // retrying in the background — poll until it flips to verified/failed.
+        if (v.verificationStatus === "pending" || v.verificationStatus === "submitted") {
+          const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+          let final = v.verificationStatus;
+          for (let i = 0; i < 60; i++) {
+            await sleep(6000);
+            try {
+              const s = await verifyStatusByAddress(tokenAddr);
+              final = s.verificationStatus;
+              setStage("verify", { state: final === "failed" ? "err" : "ok", info: (final === "verified" ? "verified" : final) + (s.verificationError ? ` · ${s.verificationError}` : "") });
+              if (final === "verified" || final === "failed") break;
+            } catch { /* transient */ }
+          }
+          if (final !== "verified" && final !== "failed") setStage("verify", { state: "ok", info: "submitted · BscScan 校验稍后完成" });
+        }
       } catch (e) {
         setStage("verify", { state: "err", info: (e as Error).message });
       }

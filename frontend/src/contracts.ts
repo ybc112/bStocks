@@ -164,6 +164,13 @@ export async function verifySubmit(payload: {
   return j;
 }
 
+export async function verifyStatusByAddress(tokenAddress: string): Promise<VerifyResult> {
+  const r = await fetch(`${API_BASE}/api/verify/by-address/${tokenAddress.toLowerCase()}`);
+  const j = (await r.json().catch(() => ({}))) as VerifyResult;
+  if (!r.ok || !j.verificationStatus) return { tokenAddress, verificationStatus: "pending", verificationGuid: null, verificationError: "indexing" };
+  return j;
+}
+
 /* ---------------- avatar upload API ---------------- */
 export async function uploadAvatar(file: File): Promise<string> {
   const fd = new FormData();
