@@ -19,16 +19,16 @@ declare global {
   }
 }
 
-/* ---------------- BSC chain config (mainnet) ---------------- */
-export const BSC_CHAIN_ID = 56;
+/* ---------------- BSC chain config (testnet) ---------------- */
+export const BSC_CHAIN_ID = 97;
 export const BSC_CHAIN_ID_HEX = "0x" + BSC_CHAIN_ID.toString(16);
-export const BSC_RPC = "https://bsc-dataseed.bnbchain.org";
-export const BSC_EXPLORER = "https://bscscan.com";
+export const BSC_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+export const BSC_EXPLORER = "https://testnet.bscscan.com";
 
 const BSC_CHAIN_PARAMS = {
   chainId: BSC_CHAIN_ID_HEX,
-  chainName: "BNB Smart Chain",
-  nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+  chainName: "BNB Smart Chain Testnet",
+  nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
   rpcUrls: [BSC_RPC],
   blockExplorerUrls: [BSC_EXPLORER],
 };

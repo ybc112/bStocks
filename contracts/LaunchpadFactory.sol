@@ -178,6 +178,8 @@ contract LaunchpadFactory {
     function configTax(address t, uint256 b, uint256 s, uint256 tr) external onlyProjectOwner(t) { _token(t).setTax(b, s, tr); }
     function configFeeDistribution(address t, uint256 m, uint256 bb, uint256 l, uint256 d) external onlyProjectOwner(t) { _token(t).setFeeDistribution(m, bb, l, d); }
     function configExclude(address t, address a, bool f) external onlyOwner { _token(t).setExcluded(a, f); }
+    // 分红排除名单：把交易所/锁仓等地址排除出分红(黑洞/池子/合约/路由已链上自动排除)
+    function configExcludeDiv(address t, address a, bool f) external onlyProjectOwner(t) { _token(t).setDividendExcluded(a, f); }
     function configWhitelist(address t, address[] calldata addrs, bool f) external onlyProjectOwner(t) { _token(t).setWhitelist(addrs, f); }
     function configDiv(address t, uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyProjectOwner(t) { _token(t).enableDiv(id, rewardToken, minEligible, f); }
     function configPool(address t, address p) external onlyProjectOwner(t) { _token(t).setPair(p); }

@@ -55,6 +55,9 @@ contract StocksToken {
     address public constant DEAD = address(0xdead);
     mapping(address => bool) public isPool;
     mapping(address => bool) public isExcludedFromFees;
+    // 分红排除名单：被排除的地址(HOLD 持币/LIQ 加池/BURN 燃烧)不获取任何分红份额，
+    // 用于黑洞、锁仓、加池(LP 合约/交易对)与交易所地址。池子与黑洞在链上自动排除。
+    mapping(address => bool) public excludedFromDividends;
 
     mapping(address => uint256) public minAmountOut;
 
@@ -87,6 +90,11 @@ contract StocksToken {
         isExcludedFromFees[address(this)] = true;
         isExcludedFromFees[_router] = true;
         isExcludedFromFees[DEAD] = true;
+        // 分红默认排除：合约自身、黑洞、路由(以及池子，在创建/毕业时自动加)
+        excludedFromDividends[address(this)] = true;
+        excludedFromDividends[DEAD] = true;
+        excludedFromDividends[_router] = true;
+        if (pair != address(0)) excludedFromDividends[pair] = true;
         _mint(address(this), MAX_SUPPLY);
     }
 
@@ -99,6 +107,9 @@ contract StocksToken {
     function addPool(address a) external onlyOwner { isPool[a] = true; }
     function removePool(address a) external onlyOwner { isPool[a] = false; }
     function setExcluded(address a, bool f) external onlyOwner { isExcludedFromFees[a] = f; }
+    // 分红排除名单设置：owners might use this to exclude a lock contract or an exchange
+    // (cex) address so those never accrue dividends. 黑洞/池子/路由已默认自动排除。
+    function setDividendExcluded(address a, bool f) external onlyOwner { excludedFromDividends[a] = f; }
     function setMinAmountOut(address token, uint256 minOut) external onlyOwner { minAmountOut[token] = minOut; }
 
     function _mint(address to, uint256 amount) internal { require(totalSupply + amount <= MAX_SUPPLY, "MAX"); totalSupply += amount; balanceOf[to] += amount; emit Transfer(address(0), to, amount); }
@@ -279,7 +290,7 @@ contract StocksToken {
         lpTokensDistributed += tokensForLP;
         _inSwap = false;
         address p = pancakeFactory.getPair(address(this), baseToken);
-        if (p != address(0) && pair == address(0)) { pair = p; isPool[p] = true; }
+        if (p != address(0) && pair == address(0)) { pair = p; isPool[p] = true; excludedFromDividends[p] = true; }
     }
 
     function allowanceRouter(address token) internal {
@@ -495,25 +506,34 @@ contract StocksToken {
         uint256 bfTokenHalf = bfTok / 2;
         uint256 divTok = (amt * dividendShare) / total;
 
-        uint256 platformBnB = _swapTokensToBNB(platformTok);
-        uint256 mktBnB = _swapTokensToBNB(mktTok);
-        uint256 bbBnB = _swapTokensToBNB(bbTok);
-        uint256 bfBnB = _swapTokensToBNB(bfTokenHalf);
+        // 单笔合并回流：整块税代币一次 swap 成 BNB，再按千分比拆分。
+        // 修复"卖一单后面跟一大串 swap"——原本 platform/marketing/买返/回流/分红
+        // 各自 _swapTokensToBNB，一笔卖出会触发 5~6 笔回流交易；现合并为 1 笔主回流
+        // (AMM 常和 x*y=k 下价格中性)。
+        uint256 bnbOut = _swapTokensToBNB(amt);
 
+        // 清桶记账（按各自 token 份额扣）
         uint256 freeNow = _feeBucketsTotal();
         uint256 consumed = freeNow >= amt ? amt : freeNow;
         if (consumed > 0) {
-            uint256 cp = (platformTok >= tokensForPlatform ? tokensForPlatform : platformTok);
-            uint256 cm = (mktTok >= tokensForMarketing ? tokensForMarketing : mktTok);
-            uint256 cb = (bbTok >= tokensForBuyBack ? tokensForBuyBack : bbTok);
-            uint256 cbf = (bfTok >= tokensForLiquidityBackflow ? tokensForLiquidityBackflow : bfTok);
-            uint256 cd = (divTok >= tokensForDividends ? tokensForDividends : divTok);
+            uint256 cp = platformTok >= tokensForPlatform ? tokensForPlatform : platformTok;
+            uint256 cm = mktTok >= tokensForMarketing ? tokensForMarketing : mktTok;
+            uint256 cb = bbTok >= tokensForBuyBack ? tokensForBuyBack : bbTok;
+            uint256 cbf = bfTok >= tokensForLiquidityBackflow ? tokensForLiquidityBackflow : bfTok;
+            uint256 cd = divTok >= tokensForDividends ? tokensForDividends : divTok;
             tokensForPlatform -= cp;
             tokensForMarketing -= cm;
             tokensForBuyBack -= cb;
             tokensForLiquidityBackflow -= cbf;
             tokensForDividends -= cd;
         }
+
+        // 按千分比拆分 BNB（platform+mkt+bb+bf+div = 1000）
+        uint256 platformBnB = bnbOut * platformShare / total;
+        uint256 mktBnB      = bnbOut * marketingShare / total;
+        uint256 bbBnB       = bnbOut * buyBackShare / total;
+        uint256 bfBnB       = bnbOut * liquidityBackflowShare / total;
+        uint256 divBnB      = bnbOut * dividendShare / total;
 
         if (platformBnB > 0 && launchpad != address(0)) {
             try ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB) {} catch {}
@@ -526,24 +546,19 @@ contract StocksToken {
 
         if (activeDiv != 0) {
             if (nativeDiv) {
-                _creditDividend(activeDiv, divTok);
+                _creditDividend(activeDiv, divBnB);
             } else {
-                uint256 dBnB = _swapTokensToBNB(divTok);
-                if (dBnB > 0) {
-                    address reward = _divs[activeDiv].rewardToken;
-                    if (reward == WBNB) {
-                        _creditDividend(activeDiv, dBnB);
-                    } else {
-                        uint256 beforeRew = IERC20External(reward).balanceOf(address(this));
-                        address[] memory rp = new address[](2);
-                        rp[0] = WBNB;
-                        rp[1] = reward;
-                        _inSwap = true;
-                        router.swapExactETHForTokens{value: dBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300);
-                        _inSwap = false;
-                        uint256 got = IERC20External(reward).balanceOf(address(this)) - beforeRew;
-                        if (got > 0) _creditDividend(activeDiv, got);
-                    }
+                address reward = _divs[activeDiv].rewardToken;
+                if (reward == WBNB) {
+                    _creditDividend(activeDiv, divBnB);
+                } else if (divBnB > 0) {
+                    uint256 beforeRew = IERC20External(reward).balanceOf(address(this));
+                    address[] memory rp = new address[](2);
+                    rp[0] = WBNB;
+                    rp[1] = reward;
+                    try router.swapExactETHForTokens{value: divBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300) {} catch {}
+                    uint256 got = IERC20External(reward).balanceOf(address(this)) - beforeRew;
+                    if (got > 0) _creditDividend(activeDiv, got);
                 }
             }
         }
@@ -659,6 +674,7 @@ contract StocksToken {
     function _recordDivShare(uint8 id, address account, uint256 amount) internal {
         DivData storage d = _divs[id];
         if (!d.enabled) return;
+        if (excludedFromDividends[account]) return; // 黑洞/池子/锁仓/交易所不参与
         uint256 old = d.shares[account];
         uint256 next = d.shares[account] + amount;
         d.shares[account] = next;
@@ -749,6 +765,7 @@ contract StocksToken {
     function _settleHold(address user) internal {
         DivData storage d = _divs[DIV_HOLD];
         if (!d.enabled) return;
+        if (excludedFromDividends[user]) return; // 被排除地址从不派发
         uint256 old = d.shares[user];
         if (old == 0) return;
         uint256 gross = (old * d.accPerShare) / DIV_PRECISION;
@@ -764,6 +781,11 @@ contract StocksToken {
     function _refreshHold(address user) internal {
         DivData storage d = _divs[DIV_HOLD];
         if (!d.enabled) return;
+        if (excludedFromDividends[user]) { // 黑洞/池子/锁仓/交易所：份额清零、不参与
+            uint256 oldEx = d.shares[user];
+            if (oldEx != 0) { d.totalShares -= oldEx; d.shares[user] = 0; d.paidPerShare[user] = 0; }
+            return;
+        }
         uint256 newShare = balanceOf[user] >= d.minEligible ? balanceOf[user] : 0;
         uint256 old = d.shares[user];
         if (old == 0 && newShare == 0) return;
