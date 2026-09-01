@@ -77,11 +77,22 @@ async function submitVerification({ address, contractName, constructorArgsHex })
     contractname: contractName, compilerversion: compilerVersion,
     constructorArguments: constructorArgsHex || "", licenseType: 3,
   });
-  try {
-    const response = await fetch(`${ETHERSCAN_API}?chainid=${encodeURIComponent(String(CHAIN_ID))}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
-    const data = await response.json();
-    return { kind: "result", status: data.status === "1" ? "submitted" : "failed", guid: data.result || null, error: data.status !== "1" ? data.result : null };
-  } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
+  // A freshly-deployed contract may not be indexed by BscScan yet, which returns
+  // "Unable to locate ContractCode". Retry briefly before giving up.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const response = await fetch(`${ETHERSCAN_API}?chainid=${encodeURIComponent(String(CHAIN_ID))}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
+      const data = await response.json();
+      const msg = String(data.result || "");
+      if (data.status === "1" && msg && msg.includes("Unable to locate ContractCode") && attempt < 3) {
+        await sleep(4000);
+        continue;
+      }
+      return { kind: "result", status: data.status === "1" ? "submitted" : "failed", guid: data.result || null, error: data.status !== "1" ? data.result : null };
+    } catch (err) { return { kind: "error", status: "failed", guid: null, error: err.message }; }
+  }
+  return { kind: "error", status: "failed", guid: null, error: "verification retry exhausted" };
 }
 
 // ---- Avatar upload config ----
@@ -146,10 +157,17 @@ let standardJsonInput = null;
 let compilerVersion = "";
 try {
   const buildInfoDir = path.join(__dirname, "..", "artifacts", "build-info");
-  const files = fs.readdirSync(buildInfoDir).filter((f) => f.endsWith(".json")).sort().reverse();
+  // Only select the build-info whose compiled StocksToken creation bytecode EXACTLY
+  // matches the deployed artifact bytecode. Sorting alone is unreliable when multiple
+  // build-info files coexist (e.g. after recompiles), which caused BscScan
+  // "deployment bytecode does NOT match" failures.
+  const files = fs.readdirSync(buildInfoDir).filter((f) => f.endsWith(".json"));
   for (const f of files) {
     const data = JSON.parse(fs.readFileSync(path.join(buildInfoDir, f), "utf8"));
-    if (data?.output?.contracts?.["contracts/StocksToken.sol"]?.StocksToken) {
+    const t = data?.output?.contracts?.["contracts/StocksToken.sol"]?.StocksToken;
+    if (!t) continue;
+    const obj = "0x" + (t.evm?.bytecode?.object || "");
+    if (stockArtifact && stockArtifact.bytecode && obj.toLowerCase() === stockArtifact.bytecode.toLowerCase()) {
       standardJsonInput = JSON.stringify(data.input);
       if (data.solcLongVersion) compilerVersion = "v" + data.solcLongVersion;
       break;
