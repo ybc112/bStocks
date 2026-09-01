@@ -70,6 +70,7 @@ contract StocksToken {
     modifier nonReentrant() { require(!_reentrancy, "RE"); _reentrancy = true; _; _reentrancy = false; }
     bool internal _reentrancy;
     bool internal _inSwap;
+    bool internal _swappingFees;
 
     constructor(string memory _name, string memory _symbol, address _router, address _factory, address _dev, address _marketing, address _baseToken) {
         name = _name;
@@ -121,6 +122,21 @@ contract StocksToken {
     uint256 public liquidityBackflowShare = 200;
     uint256 public dividendShare = 100;
     uint256 public swapThreshold = 10 ** 24;
+
+    // Reference-style fee buckets: collected tax is split and accumulated here, and
+    // the flush only runs once the accumulated buckets clear the threshold — so fresh
+    // or thin pools (small accumulated fees) simply skip the flush and keep user swaps
+    // clean instead of corrupting the pool on every trade.
+    uint256 public tokensForPlatform;
+    uint256 public tokensForMarketing;
+    uint256 public tokensForBuyBack;
+    uint256 public tokensForLiquidityBackflow;
+    uint256 public tokensForDividends;
+
+    function _feeBucketsTotal() internal view returns (uint256) {
+        return tokensForPlatform + tokensForMarketing + tokensForBuyBack
+            + tokensForLiquidityBackflow + tokensForDividends;
+    }
 
     function setFeeDistribution(uint256 m, uint256 bb, uint256 bf, uint256 dv) external onlyOwner {
         require(m + bb + bf + dv == TAX_DIVISOR - platformShare);
@@ -210,21 +226,16 @@ contract StocksToken {
         mintTokensDistributed += tokens;
         emit Transfer(address(this), msg.sender, tokens);
 
-        // BNB split: only the pool-percent portion pairs with the LP reserve;
-        // the remainder goes to devWallet immediately and is NOT refundable.
-        uint256 lpBNB = (use * poolPercent) / TAX_DIVISOR;
-        uint256 devBNB = use - lpBNB;
+        // 100% of each mint's BNB pairs with the LP reserve (matches the reference
+        // launchpad) so the pool always keeps full real depth for buy/sell even at
+        // tiny mint amounts. Dev is funded via sell fees instead of a mint cut.
+        uint256 lpBNB = use;
         totalPoolBNB += lpBNB;
         mintedPoolBNB[msg.sender] += lpBNB;
 
         uint256 lpTokens = last ? MINT_RESERVE - lpTokensDistributed : (MINT_RESERVE * use) / capBNB;
         mintedLPTokenAmount[msg.sender] += lpTokens;
         _addLiquidityLive(lpBNB, lpTokens);
-
-        if (devBNB > 0 && devWallet != address(0)) {
-            (bool ok,) = payable(devWallet).call{value: devBNB}("");
-            require(ok, "DEV");
-        }
 
         if (last) _graduate();
 
@@ -398,7 +409,14 @@ contract StocksToken {
 
         uint256 net = amount - tax;
         balanceOf[from] -= amount;
-        if (tax > 0) balanceOf[address(this)] += tax;
+        if (tax > 0) {
+            balanceOf[address(this)] += tax;
+            tokensForPlatform += (tax * platformShare) / TAX_DIVISOR;
+            tokensForMarketing += (tax * marketingShare) / TAX_DIVISOR;
+            tokensForBuyBack += (tax * buyBackShare) / TAX_DIVISOR;
+            tokensForLiquidityBackflow += (tax * liquidityBackflowShare) / TAX_DIVISOR;
+            tokensForDividends += (tax * dividendShare) / TAX_DIVISOR;
+        }
         balanceOf[to] += net;
         emit Transfer(from, to, net);
         if (tax > 0) emit Transfer(from, address(this), tax);
@@ -411,8 +429,11 @@ contract StocksToken {
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
 
-        if (tax > 0 && !_inSwap && pair != address(0) && balanceOf[address(this)] >= swapThreshold && !isPool[from]) {
-            _processFees();
+        if (tax > 0 && !_inSwap && pair != address(0) && _feeBucketsTotal() >= swapThreshold && !isPool[from]) {
+            // Reference-style: external self-call wrapped in try/catch so a failed fee
+            // flush is atomic (all-or-nothing) and swallowed — it can never corrupt the
+            // in-flight AMM swap or block a user's trade on a thin pool.
+            try this.processFees() {} catch {}
         }
     }
 
@@ -444,7 +465,7 @@ contract StocksToken {
     // Allocate the FULL tax (permille = 1000) precisely:
     // platform 200 ; project shares sum to 800. Each share swaps its own tokens.
     function _processFees() internal {
-        uint256 free = balanceOf[address(this)] - _selfTokenDividendReserve();
+        uint256 free = _feeBucketsTotal();
         if (free < swapThreshold) return;
         uint256 amt = swapThreshold;
         uint256 total = TAX_DIVISOR;
@@ -462,6 +483,21 @@ contract StocksToken {
         uint256 mktBnB = _swapTokensToBNB(mktTok);
         uint256 bbBnB = _swapTokensToBNB(bbTok);
         uint256 bfBnB = _swapTokensToBNB(bfTokenHalf);
+
+        uint256 freeNow = _feeBucketsTotal();
+        uint256 consumed = freeNow >= amt ? amt : freeNow;
+        if (consumed > 0) {
+            uint256 cp = (platformTok >= tokensForPlatform ? tokensForPlatform : platformTok);
+            uint256 cm = (mktTok >= tokensForMarketing ? tokensForMarketing : mktTok);
+            uint256 cb = (bbTok >= tokensForBuyBack ? tokensForBuyBack : bbTok);
+            uint256 cbf = (bfTok >= tokensForLiquidityBackflow ? tokensForLiquidityBackflow : bfTok);
+            uint256 cd = (divTok >= tokensForDividends ? tokensForDividends : divTok);
+            tokensForPlatform -= cp;
+            tokensForMarketing -= cm;
+            tokensForBuyBack -= cb;
+            tokensForLiquidityBackflow -= cbf;
+            tokensForDividends -= cd;
+        }
 
         if (platformBnB > 0 && launchpad != address(0)) {
             try ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB) {} catch {}
@@ -496,6 +532,22 @@ contract StocksToken {
             }
         }
         emit FeesProcessed(amt, 0);
+    }
+
+    // Reference-style non-blocking fee flush: the real work runs via an EXTERNAL
+    // self-call wrapped in try/catch, so any revert rolls the whole flush back
+    // atomically and is swallowed. It can never corrupt an in-flight AMM swap or
+    // block a user's buy/sell, even on an ultra-thin pool.
+    function processFees() external {
+        if (_swappingFees) return;
+        _swappingFees = true;
+        try this._processFeesDispatch() {} catch {}
+        _swappingFees = false;
+    }
+
+    function _processFeesDispatch() external {
+        if (msg.sender != address(this)) revert("SELF");
+        _processFees();
     }
 
     function _buyBackAndBurn(uint256 bnbIn) internal {
