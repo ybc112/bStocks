@@ -527,11 +527,18 @@ contract StocksToken {
     function _processFees() internal {
         uint256 free = _feeBucketsTotal();
         if (free == 0) return;
-        // 一次把整把税代币换光(对齐参考合约:大卖可一次结算全部积累)，不堆积；
-        // 换出的 BASE(配对计价币) 再按千分比拆给 平台/营销/买返/回流/分红。
-        //   - base=WBNB : 得到的base=BNB，原样分发
-        //   - base=镜像币: 主回流=镜像币(1跳)，营销/买返/平台这几份走 base->WBNB 再发
+        // 对齐参考合约：不一次 dump 整桶，否则薄池整笔回退被 try/catch 吞掉 → 税桶堆死。
+        // 单次最多清「交易对代币储配」的一小部分，剩余留待后续卖出继续清，逐步派发。
         uint256 amt = free;
+        address _pair = pair;
+        if (_pair != address(0)) {
+            uint256 poolTok = balanceOf[_pair];
+            if (poolTok > 0) {
+                uint256 cap = poolTok / 25; // 每次清 ≤4% 池子代币侧，薄池也不会整笔回退
+                if (amt > cap) amt = cap;
+            }
+        }
+        if (amt == 0) return;
         uint256 total = TAX_DIVISOR;
         uint8 activeDiv = _activeDivId();
         bool isBnbBase = baseToken == WBNB;

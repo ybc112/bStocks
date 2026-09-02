@@ -20,7 +20,7 @@
 - 加池比例可调 `poolPercent`：前端默认 60%（**60% 进池 / 40% 给 dev**），滑杆 60–100% 对应 permille 600–1000。`swapIn` 必须按 `poolBNB = use*poolPercent/1000` 拆分，`use-poolBNB` 即时转 devWallet（非阻断），退款只退进池部分。
 - 卖出清税**必须非阻断**（`_processFees` 内部 swap 全部 `try/catch`），否则薄池会整笔回退。
 - **清税必须在「把用户净额记入池子」之前执行**（顺序铁律）。若先记净额再 flush，flush 的 `pair._update()` 会把 reserve 推进到已含用户净额，Pancake Router 的 `*SupportingFeeOnTransferTokens` 计量输入增量=0 → 每笔卖出 `PancakeLibrary: INSUFFICIENT_INPUT_AMOUNT`。参照合约 `Smiley` 正是「先 `swapTokenForFund`，后 `_tokenTransfer`」。
-- **税币回流要合并成单笔，且按"底池计价币"(base)**：`_processFees` 用 `_swapToBase(amt)` 一次性把整块税代币换成 **base**（不堆积），再按千分比拆 平台/营销/买返/回流/分红，避免"卖一单后面跟一大串 swap"。**base 用哪种计价贴合对底层池**：
+- **税币回流要合并成单笔，但每次清税必须给单次 swap 设上限**：`_processFees` 里 `amt = min(税桶总量, 交易对代币侧储备/25)`（即 ≤4% 池子代币侧）。**绝不要 `amt=税桶总量` 一次性 dump 整桶**——薄池下整桶 swap 必回退，被外层 `try/catch` 吞掉，税桶堆死 → 分红/销毁/回流/营销全 0，交易却正常（这是历史踩坑：`0x283757…`/`0xb003ad…` 现状）。设上限后每次卖出清 ≤4%，剩余留待后续卖出继续清，逐步派发。（对齐参考合约 `amountIn` 小额累积、过 `minReward` 才换一次）
   - `base==WBNB`：`token→WBNB`（2跳原生 BNB），各份额原样 BNB 分发；
   - `base==镜像币(≠WBNB)`：`token→base`（**1跳直换镜像币**，对齐 SUNXIAOSHENG"回流=镜像币"，不要拖去 WBNB 再来回折）；营销/买返/平台这几份走 `_baseToWBNB`(base→BNB) 再发，回流回填 `_backfillLiquidity` 直接用镜像币 `addLiquidity(token, base)` 加池，分红 `reward==base` 时直接以镜像币派发。
 - **镜像底池的分红 reward 仅支持 `base` 或 `WBNB`**（不受限的任意 ERC20 分红仅 BNB 底支持），否则会 `_baseToWBNB` 折 BNB 后派发。
