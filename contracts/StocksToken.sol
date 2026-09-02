@@ -31,6 +31,10 @@ interface ILaunchpad {
 
 contract StocksToken {
     error InvalidMintConfig();
+    error NotOwner();
+    error Reentrant();
+    error Frozen();
+    error Guard();
     string public name;
     string public symbol;
     uint8 public constant decimals = 0;
@@ -69,8 +73,8 @@ contract StocksToken {
     event FeesProcessed(uint256 tokensSwapped, uint256 bnbReceived);
     event BuyBackAndBurn(uint256 bnbIn, uint256 tokensOut);
 
-    modifier onlyOwner() { require(msg.sender == owner, "NO"); _; }
-    modifier nonReentrant() { require(!_reentrancy, "RE"); _reentrancy = true; _; _reentrancy = false; }
+    modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
+    modifier nonReentrant() { if (_reentrancy) revert Reentrant(); _reentrancy = true; _; _reentrancy = false; }
     bool internal _reentrancy;
     bool internal _inSwap;
     bool internal _swappingFees;
@@ -99,20 +103,20 @@ contract StocksToken {
     }
 
     function transferOwnership(address a) external onlyOwner { pendingOwner = a; }
-    function acceptOwnership() external { require(msg.sender == pendingOwner, "NP"); owner = pendingOwner; pendingOwner = address(0); }
-    function setDev(address a) external onlyOwner { require(!configFreeze,"FZ"); devWallet = a; }
-    function setMarketing(address a) external onlyOwner { require(!configFreeze,"FZ"); marketingWallet = a; }
-    function setLaunchpad(address a) external onlyOwner { require(!configFreeze,"FZ"); launchpad = a; }
-    function setPair(address a) external onlyOwner { require(!configFreeze,"FZ"); pair = a; isPool[a] = true; }
-    function addPool(address a) external onlyOwner { require(!configFreeze,"FZ"); isPool[a] = true; }
-    function removePool(address a) external onlyOwner { require(!configFreeze,"FZ"); isPool[a] = false; }
-    function setExcluded(address a, bool f) external onlyOwner { require(!configFreeze,"FZ"); isExcludedFromFees[a] = f; }
+    function acceptOwnership() external { if (msg.sender != pendingOwner) revert Guard(); owner = pendingOwner; pendingOwner = address(0); }
+    function setDev(address a) external onlyOwner { if (configFreeze) revert Frozen(); devWallet = a; }
+    function setMarketing(address a) external onlyOwner { if (configFreeze) revert Frozen(); marketingWallet = a; }
+    function setLaunchpad(address a) external onlyOwner { if (configFreeze) revert Frozen(); launchpad = a; }
+    function setPair(address a) external onlyOwner { if (configFreeze) revert Frozen(); pair = a; isPool[a] = true; }
+    function addPool(address a) external onlyOwner { if (configFreeze) revert Frozen(); isPool[a] = true; }
+    function removePool(address a) external onlyOwner { if (configFreeze) revert Frozen(); isPool[a] = false; }
+    function setExcluded(address a, bool f) external onlyOwner { if (configFreeze) revert Frozen(); isExcludedFromFees[a] = f; }
     // 分红排除名单设置：owners might use this to exclude a lock contract or an exchange
     // (cex) address so those never accrue dividends. 黑洞/池子/路由已默认自动排除。
-    function setDividendExcluded(address a, bool f) external onlyOwner { require(!configFreeze,"FZ"); excludedFromDividends[a] = f; }
-    function setMinAmountOut(address token, uint256 minOut) external onlyOwner { require(!configFreeze,"FZ"); minAmountOut[token] = minOut; }
+    function setDividendExcluded(address a, bool f) external onlyOwner { if (configFreeze) revert Frozen(); excludedFromDividends[a] = f; }
+    function setMinAmountOut(address token, uint256 minOut) external onlyOwner { if (configFreeze) revert Frozen(); minAmountOut[token] = minOut; }
 
-    function _mint(address to, uint256 amount) internal { require(totalSupply + amount <= MAX_SUPPLY, "MAX"); totalSupply += amount; balanceOf[to] += amount; emit Transfer(address(0), to, amount); }
+    function _mint(address to, uint256 amount) internal { if (totalSupply + amount > MAX_SUPPLY) revert Guard(); totalSupply += amount; balanceOf[to] += amount; emit Transfer(address(0), to, amount); }
     function _burn(address a, uint256 amount) internal { totalSupply -= amount; balanceOf[a] -= amount; emit Transfer(a, address(0), amount); }
 
     uint256 public buyTax;
@@ -121,8 +125,8 @@ contract StocksToken {
     uint256 public constant TAX_DIVISOR = 1000;
 
     function setTax(uint256 b, uint256 s, uint256 t) external onlyOwner {
-        require(!configFreeze,"FZ");   // 首次 mint 起冻结税率
-        require(b <= 250 && s <= 250 && t <= 250, "TX");
+        if (configFreeze) revert Frozen();   // 首次 mint 起冻结税率
+        if (b > 250 || s > 250 || t > 250) revert Guard();
         buyTax = b; sellTax = s; transferTax = t;
     }
 
@@ -151,7 +155,7 @@ contract StocksToken {
     }
 
     function setFeeDistribution(uint256 m, uint256 bb, uint256 bf, uint256 dv) external onlyOwner {
-        require(!configFreeze,"FZ");   // 首次 mint 起冻结手续费分配
+        if (configFreeze) revert Frozen();   // 首次 mint 起冻结手续费分配
         require(m + bb + bf + dv == TAX_DIVISOR - platformShare);
         marketingShare = m;
         buyBackShare = bb;
@@ -192,7 +196,7 @@ contract StocksToken {
     event MintConfigSet(uint256 capBNB, uint256 poolPercent);
 
     function setMintConfig(bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
-        require(!configFreeze,"FZ");   // 首次 mint 起冻结铸造参数
+        if (configFreeze) revert Frozen();   // 首次 mint 起冻结铸造参数
         if (poolPct < 600 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
         poolPercent = poolPct;
@@ -208,7 +212,7 @@ contract StocksToken {
         emit MintConfigSet(cap, poolPct);
     }
     function setWhitelist(address[] calldata addrs, bool f) external onlyOwner { for (uint256 i = 0; i < addrs.length; i++) whitelist[addrs[i]] = f; }
-    function setGraduationThreshold(uint256 t) external onlyOwner { require(t >= 0.001 ether, "GT"); minCapBNB = t; }
+    function setGraduationThreshold(uint256 t) external onlyOwner { if (configFreeze) revert Frozen(); if (t < 0.001 ether) revert Guard(); minCapBNB = t; }
 
     receive() external payable {
         if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB) swapIn(msg.value);
@@ -479,32 +483,25 @@ contract StocksToken {
     }
 
     // Loopback to turn a token chunk into the POOL BASE (pair denominator).
-    //  - base==WBNB : token -> WBNB  (2-hop, native BNB)
-    //  - base!=WBNB : token -> baseToken (1-hop straight to the mirror base),
-    //    matching SUNXIAOSHENG's "回流=镜像币" — never drag it through WBNB.
+    //  - base==WBNB : 结构上无法把 BNB 送进本币合约(Pancake INVALID_TO：本币在 T/WBNB 对里) → 返回 0。
+    //  - base!=WBNB(镜像底): token->base->WBNB 多跳把原生 BNB 收进合约(最后一段 base/WBNB 不含本币，合法)，
+    //    再 WBNB->base 收回 base 供回流/分红；两跳的最后一段都不含本币，规避 INVALID_TO。
     function _swapToBase(uint256 amount) internal returns (uint256 out) {
         if (amount == 0 || balanceOf[address(this)] < amount) return 0;
-        address[] memory path;
-        if (baseToken == WBNB) {
-            path = new address[](2);
-            path[0] = address(this);
-            path[1] = WBNB;
-        } else {
-            path = new address[](2);
-            path[0] = address(this);
-            path[1] = baseToken;
-        }
         _inSwap = true;
-        if (baseToken == WBNB) {
-            uint256 before = address(this).balance;
-            // Atomic (no internal catch): if this can't complete, the WHOLE
-            // fee-flush rolls back wholesale and is swallowed by processFees.
-            router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
-            out = address(this).balance - before;
-        } else {
-            uint256 before = IERC20External(baseToken).balanceOf(address(this));
-            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, path, address(this), block.timestamp + 300);
-            out = IERC20External(baseToken).balanceOf(address(this)) - before;
+        if (baseToken != WBNB) {
+            address[] memory p = new address[](3);
+            p[0] = address(this); p[1] = baseToken; p[2] = WBNB;
+            uint256 beforeBnb = address(this).balance;
+            router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, p, address(this), block.timestamp + 300);
+            uint256 gotBnb = address(this).balance - beforeBnb;
+            if (gotBnb > 0) {
+                address[] memory p2 = new address[](2);
+                p2[0] = WBNB; p2[1] = baseToken;
+                uint256 beforeBase = IERC20External(baseToken).balanceOf(address(this));
+                router.swapExactETHForTokens{value: gotBnb}(0, p2, address(this), block.timestamp + 300);
+                out = IERC20External(baseToken).balanceOf(address(this)) - beforeBase;
+            }
         }
         _inSwap = false;
     }
@@ -552,6 +549,8 @@ contract StocksToken {
 
         // 单笔主回流：整块税代币一次换到 BASE。
         uint256 baseOut = _swapToBase(amt);
+        // 换不到任何 base（本币结构上无法自动回流，如 WBNB 底）：不放空税桶，留待更可行路径。
+        if (baseOut == 0) return;
 
         // 清桶记账（按各自 token 份额扣）
         uint256 freeNow = _feeBucketsTotal();
@@ -698,7 +697,7 @@ contract StocksToken {
     }
 
     function enableDiv(uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner {
-        require(!configFreeze,"FZ");   // 首次 mint 起冻结分红模式/奖励币/门槛
+        if (configFreeze) revert Frozen();   // 首次 mint 起冻结分红模式/奖励币/门槛
         require(id >= DIV_HOLD && id <= DIV_BURN, "ID");
         if (f) {
             for (uint8 other = DIV_HOLD; other <= DIV_BURN; other++) {

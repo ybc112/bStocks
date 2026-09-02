@@ -21,6 +21,11 @@
 - 卖出清税**必须非阻断**（`_processFees` 内部 swap 全部 `try/catch`），否则薄池会整笔回退。
 - **清税必须在「把用户净额记入池子」之前执行**（顺序铁律）。若先记净额再 flush，flush 的 `pair._update()` 会把 reserve 推进到已含用户净额，Pancake Router 的 `*SupportingFeeOnTransferTokens` 计量输入增量=0 → 每笔卖出 `PancakeLibrary: INSUFFICIENT_INPUT_AMOUNT`。参照合约 `Smiley` 正是「先 `swapTokenForFund`，后 `_tokenTransfer`」。
 - **税币回流要合并成单笔，但每次清税必须给单次 swap 设上限**：`_processFees` 里 `amt = min(税桶总量, 交易对代币侧储备/25)`（即 ≤4% 池子代币侧）。**绝不要 `amt=税桶总量` 一次性 dump 整桶**——薄池下整桶 swap 必回退，被外层 `try/catch` 吞掉，税桶堆死 → 分红/销毁/回流/营销全 0，交易却正常（这是历史踩坑：`0x283757…`/`0xb003ad…` 现状）。设上限后每次卖出清 ≤4%，剩余留待后续卖出继续清，逐步派发。（对齐参考合约 `amountIn` 小额累积、过 `minReward` 才换一次）
+- **★★ 决定性根因：Pancake `INVALID_TO`（PancakeLP `swap()` 的 `require(to != token0 && to != token1)`）★★**
+  - 本币合约是自己 `(token, base)` LP 里的 token0/token1 之一，所以**任何「token→base 且 `to=address(this)` 收钱」的 swap 必被这条弹回** → 税桶永不清理 → 分红/销毁/回流/营销永远为 0（`0x283757/0xb003ad/0xceaadec` 现状即此，非量太大、非池厚薄，是 `to` 撞了本币）。
+  - 参考 SUNXIAOSHENG 分红走 `base→reward`（那对 LP **不含**它自己的币），`to=合约` 合法，所以不踩坑。
+  - 修复（`_swapToBase`）：**镜像底**用 `[token→base→WBNB]` 多跳把原生 BNB 收进合约（最后一段 base/WBNB 不含本币，`to=合约` 合法，已在活链验证 OK），再 `swapExactETHForTokens[WBNB→base]` 收回 base 供回流/分红；**WBNB 底结构上无法自动回流**（本币每条路都过 T/WBNB 对），返回 0 且 `baseOut==0` 时 `return` 不放空税桶，分红只走手动 `depositDiv`。
+  - 判据：镜像底/股票底可自动回流；WBNB底+BNB分红只能手动注资。
   - `base==WBNB`：`token→WBNB`（2跳原生 BNB），各份额原样 BNB 分发；
   - `base==镜像币(≠WBNB)`：`token→base`（**1跳直换镜像币**，对齐 SUNXIAOSHENG"回流=镜像币"，不要拖去 WBNB 再来回折）；营销/买返/平台这几份走 `_baseToWBNB`(base→BNB) 再发，回流回填 `_backfillLiquidity` 直接用镜像币 `addLiquidity(token, base)` 加池，分红 `reward==base` 时直接以镜像币派发。
 - **镜像底池的分红 reward 仅支持 `base` 或 `WBNB`**（不受限的任意 ERC20 分红仅 BNB 底支持），否则会 `_baseToWBNB` 折 BNB 后派发。
