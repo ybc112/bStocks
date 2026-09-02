@@ -465,8 +465,11 @@ contract StocksToken {
         if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
     }
 
-    // Loopback to turn a token chunk into BNB via the active pool.
-    function _swapTokensToBNB(uint256 amount) internal returns (uint256 bnb) {
+    // Loopback to turn a token chunk into the POOL BASE (pair denominator).
+    //  - base==WBNB : token -> WBNB  (2-hop, native BNB)
+    //  - base!=WBNB : token -> baseToken (1-hop straight to the mirror base),
+    //    matching SUNXIAOSHENG's "回流=镜像币" — never drag it through WBNB.
+    function _swapToBase(uint256 amount) internal returns (uint256 out) {
         if (amount == 0 || balanceOf[address(this)] < amount) return 0;
         address[] memory path;
         if (baseToken == WBNB) {
@@ -474,19 +477,36 @@ contract StocksToken {
             path[0] = address(this);
             path[1] = WBNB;
         } else {
-            path = new address[](3);
+            path = new address[](2);
             path[0] = address(this);
             path[1] = baseToken;
-            path[2] = WBNB;
         }
         _inSwap = true;
-        uint256 before = address(this).balance;
-        // Atomic (no internal catch): if this can't complete, the WHOLE fee-flush
-        // rolls back wholesale and the user's sell proceeds on an untouched pool —
-        // exactly how the reference launchpad keeps trades alive on thin pools.
-        router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
-        bnb = address(this).balance - before;
+        if (baseToken == WBNB) {
+            uint256 before = address(this).balance;
+            // Atomic (no internal catch): if this can't complete, the WHOLE
+            // fee-flush rolls back wholesale and is swallowed by processFees.
+            router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minAmountOut[WBNB], path, address(this), block.timestamp + 300);
+            out = address(this).balance - before;
+        } else {
+            uint256 before = IERC20External(baseToken).balanceOf(address(this));
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, path, address(this), block.timestamp + 300);
+            out = IERC20External(baseToken).balanceOf(address(this)) - before;
+        }
         _inSwap = false;
+    }
+
+    // Turn a slice of pool BASE into WBNB for BNB-denominated fees (platform/mkt/
+    // buyback/BNB-dividend). No-op when base already is WBNB.
+    function _baseToWBNB(uint256 baseIn) internal returns (uint256 out) {
+        if (baseIn == 0 || baseToken == WBNB) return baseIn;
+        address[] memory path = new address[](2);
+        path[0] = baseToken;
+        path[1] = WBNB;
+        uint256 before = address(this).balance;
+        allowanceRouter(baseToken);
+        router.swapExactTokensForETHSupportingFeeOnTransferTokens(baseIn, 0, path, address(this), block.timestamp + 300);
+        out = address(this).balance - before;
     }
 
     // Allocate the FULL tax (permille = 1000) precisely:
@@ -495,11 +515,13 @@ contract StocksToken {
         uint256 free = _feeBucketsTotal();
         if (free == 0) return;
         // 一次把整把税代币换光(对齐参考合约:大卖可一次结算全部积累)，不堆积；
-        // 换出的 BNB 再按千分比拆给 平台/营销/买返/回流/分红。
+        // 换出的 BASE(配对计价币) 再按千分比拆给 平台/营销/买返/回流/分红。
+        //   - base=WBNB : 得到的base=BNB，原样分发
+        //   - base=镜像币: 主回流=镜像币(1跳)，营销/买返/平台这几份走 base->WBNB 再发
         uint256 amt = free;
         uint256 total = TAX_DIVISOR;
         uint8 activeDiv = _activeDivId();
-        bool nativeDiv = activeDiv != 0 && _divs[activeDiv].rewardToken == address(0);
+        bool isBnbBase = baseToken == WBNB;
 
         uint256 platformTok = (amt * platformShare) / total;
         uint256 mktTok = (amt * marketingShare) / total;
@@ -508,11 +530,8 @@ contract StocksToken {
         uint256 bfTokenHalf = bfTok / 2;
         uint256 divTok = (amt * dividendShare) / total;
 
-        // 单笔合并回流：整块税代币一次 swap 成 BNB，再按千分比拆分。
-        // 修复"卖一单后面跟一大串 swap"——原本 platform/marketing/买返/回流/分红
-        // 各自 _swapTokensToBNB，一笔卖出会触发 5~6 笔回流交易；现合并为 1 笔主回流
-        // (AMM 常和 x*y=k 下价格中性)。
-        uint256 bnbOut = _swapTokensToBNB(amt);
+        // 单笔主回流：整块税代币一次换到 BASE。
+        uint256 baseOut = _swapToBase(amt);
 
         // 清桶记账（按各自 token 份额扣）
         uint256 freeNow = _feeBucketsTotal();
@@ -530,37 +549,44 @@ contract StocksToken {
             tokensForDividends -= cd;
         }
 
-        // 按千分比拆分 BNB（platform+mkt+bb+bf+div = 1000）
-        uint256 platformBnB = bnbOut * platformShare / total;
-        uint256 mktBnB      = bnbOut * marketingShare / total;
-        uint256 bbBnB       = bnbOut * buyBackShare / total;
-        uint256 bfBnB       = bnbOut * liquidityBackflowShare / total;
-        uint256 divBnB      = bnbOut * dividendShare / total;
+        // 按千分比拆分 BASE（platform+mkt+bb+bf+div = 1000）
+        uint256 platformBase = baseOut * platformShare / total;
+        uint256 mktBase      = baseOut * marketingShare / total;
+        uint256 bbBase       = baseOut * buyBackShare / total;
+        uint256 bfBase       = baseOut * liquidityBackflowShare / total;
+        uint256 divBase      = baseOut * dividendShare / total;
 
-        if (platformBnB > 0 && launchpad != address(0)) {
-            try ILaunchpad(launchpad).onProjectFee{value: platformBnB}(address(this), msg.sender, platformBnB) {} catch {}
+        if (platformBase > 0 && launchpad != address(0)) {
+            uint256 p = isBnbBase ? platformBase : _baseToWBNB(platformBase);
+            if (p > 0) try ILaunchpad(launchpad).onProjectFee{value: p}(address(this), msg.sender, p) {} catch {}
         }
-        if (mktBnB > 0 && marketingWallet != address(0)) {
-            payable(marketingWallet).call{value: mktBnB}("");
+        if (mktBase > 0 && marketingWallet != address(0)) {
+            uint256 m = isBnbBase ? mktBase : _baseToWBNB(mktBase);
+            if (m > 0) payable(marketingWallet).call{value: m}("");
         }
-        if (bbBnB > 0) _buyBackAndBurn(bbBnB);
-        if (bfBnB > 0 && bfTokenHalf > 0) _backfillLiquidity(bfBnB, bfTokenHalf);
+        if (bbBase > 0) {
+            uint256 w = isBnbBase ? bbBase : _baseToWBNB(bbBase);
+            if (w > 0) _buyBackAndBurn(w);
+        }
+        if (bfBase > 0 && bfTokenHalf > 0) _backfillLiquidity(bfBase, bfTokenHalf);
 
         if (activeDiv != 0) {
-            // 自动派发：把刚积累的分红尽量分给所有持有人(对齐参考合约 process)
             _processDividends(activeDiv, 100);
-            if (nativeDiv) {
-                _creditDividend(activeDiv, divBnB);
-            } else {
-                address reward = _divs[activeDiv].rewardToken;
-                if (reward == WBNB) {
-                    _creditDividend(activeDiv, divBnB);
-                } else if (divBnB > 0) {
+            address reward = _divs[activeDiv].rewardToken;
+            if (reward == baseToken) {
+                // 分红=底池镜像币：主回流已是 base，直接记
+                if (divBase > 0) _creditDividend(activeDiv, divBase);
+            } else if (reward == WBNB) {
+                uint256 w = isBnbBase ? divBase : _baseToWBNB(divBase);
+                if (w > 0) _creditDividend(activeDiv, w);
+            } else if (reward != address(0) && divBase > 0) {
+                // 分红=任意 ERC20(USDT 等)：先把 base 折成 BNB 再换到 reward
+                uint256 baseForRew = isBnbBase ? divBase : _baseToWBNB(divBase);
+                if (baseForRew > 0) {
                     uint256 beforeRew = IERC20External(reward).balanceOf(address(this));
                     address[] memory rp = new address[](2);
-                    rp[0] = WBNB;
-                    rp[1] = reward;
-                    try router.swapExactETHForTokens{value: divBnB}(minAmountOut[reward], rp, address(this), block.timestamp + 300) {} catch {}
+                    rp[0] = WBNB; rp[1] = reward;
+                    try router.swapExactETHForTokens{value: baseForRew}(minAmountOut[reward], rp, address(this), block.timestamp + 300) {} catch {}
                     uint256 got = IERC20External(reward).balanceOf(address(this)) - beforeRew;
                     if (got > 0) _creditDividend(activeDiv, got);
                 }
@@ -597,24 +623,22 @@ contract StocksToken {
         _inSwap = false;
     }
 
-    // Liquidity backflow: pair kept token half + swapped-BNB half, LP goes to DEAD.
-    function _backfillLiquidity(uint256 bnbIn, uint256 tokenIn) internal {
-        if (bnbIn == 0 || tokenIn == 0) return;
+    // Liquidity backflow: pair keeps token half + BASE half, LP goes to DEAD.
+    //  - base=WBNB : baseIn 就是 BNB -> addLiquidityETH
+    //  - base=镜像币: baseIn 已由 _swapToBase 直接持有 -> addLiquidity(token, base)
+    function _backfillLiquidity(uint256 baseIn, uint256 tokenIn) internal {
+        if (baseIn == 0 || tokenIn == 0) return;
         if (balanceOf[address(this)] < tokenIn) return;
         _inSwap = true;
         if (baseToken == WBNB) {
             allowance[address(this)][address(router)] = type(uint256).max;
-            router.addLiquidityETH{value: bnbIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300);
+            router.addLiquidityETH{value: baseIn}(address(this), tokenIn, 0, 0, DEAD, block.timestamp + 300);
         } else {
-            address[] memory path = new address[](2);
-            path[0] = WBNB;
-            path[1] = baseToken;
-            uint256 baseBefore = IERC20External(baseToken).balanceOf(address(this));
-            router.swapExactETHForTokens{value: bnbIn}(0, path, address(this), block.timestamp + 300);
-            uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
-            if (baseBal > 0) {
+            uint256 baseBal = IERC20External(baseToken).balanceOf(address(this));
+            if (baseBal < baseIn) baseIn = baseBal;
+            if (baseIn > 0) {
                 allowanceRouter(baseToken);
-                router.addLiquidity(address(this), baseToken, tokenIn, baseBal, 0, 0, DEAD, block.timestamp + 300);
+                router.addLiquidity(address(this), baseToken, tokenIn, baseIn, 0, 0, DEAD, block.timestamp + 300);
             }
         }
         _inSwap = false;
@@ -650,13 +674,6 @@ contract StocksToken {
 
     function divShares(uint8 id, address user) external view returns (uint256) {
         return _divs[id].shares[user];
-    }
-
-    function pendingDiv(uint8 id, address user) external view returns (uint256) {
-        DivData storage d = _divs[id];
-        if (d.shares[user] == 0 || d.totalShares == 0) return 0;
-        uint256 gross = (d.shares[user] * d.accPerShare) / DIV_PRECISION;
-        return gross > d.paidPerShare[user] ? gross - d.paidPerShare[user] : 0;
     }
 
     function enableDiv(uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner {
@@ -708,12 +725,6 @@ contract StocksToken {
     function _nativeDividendReserve() internal view returns (uint256 reserved) {
         for (uint8 id = DIV_HOLD; id <= DIV_BURN; id++) {
             if (_divs[id].rewardToken == WBNB) reserved += _divs[id].pendingReward;
-        }
-    }
-
-    function _selfTokenDividendReserve() internal view returns (uint256 reserved) {
-        for (uint8 id = DIV_HOLD; id <= DIV_BURN; id++) {
-            if (_divs[id].rewardToken == address(0)) reserved += _divs[id].pendingReward;
         }
     }
 
@@ -784,15 +795,6 @@ contract StocksToken {
         require(d.rewardToken == WBNB);
         require(d.enabled, "OFF");
         _creditDividend(id, msg.value);
-        _processDividends(id, 100);
-    }
-
-    function depositDivToken(uint8 id, address token, uint256 amount) external nonReentrant {
-        DivData storage d = _divs[id];
-        require(d.rewardToken == token, "TKN");
-        require(d.enabled, "OFF");
-        (bool s,) = address(token).call(abi.encodeWithSelector(0x23b872dd, msg.sender, address(this), amount)); require(s, "TF");
-        _creditDividend(id, amount);
         _processDividends(id, 100);
     }
 
@@ -887,14 +889,5 @@ contract StocksToken {
         require(amount <= address(this).balance - reserved, "BAL");
         (bool ok,) = payable(msg.sender).call{value: amount}("");
         require(ok, "WIT");
-    }
-
-    // 在非"池内转账"的安全时机把累计的税收益(营销/回购/回流/分红/平台)真正分发出去。
-    //   - 买卖等池内转账不会再触发 _processFees(避免再入被锁的池),税币先留在合约;
-    //   - 任何钱包可在此处(或下一次普通 P2P 转账)触发,池未被占用时安全。
-    function flushFeeReserves() external nonReentrant {
-        require(pair != address(0), "NOPAIR");
-        if (_inSwap) return;
-        _processFees();
     }
 }
