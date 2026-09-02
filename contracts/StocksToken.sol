@@ -56,6 +56,7 @@ contract StocksToken {
     IPancakeRouter public immutable router;
     IPancakeFactory public immutable pancakeFactory;
     address public pair;
+    address public feeReceiver; // 独立 BNB 税币接收器(BNB 底自动税收)
     address public constant DEAD = address(0xdead);
     mapping(address => bool) public isPool;
     mapping(address => bool) public isExcludedFromFees;
@@ -70,7 +71,6 @@ contract StocksToken {
     event Minted(address indexed user, uint256 bnb, uint256 tokens);
     event Refunded(address indexed user, uint256 bnb);
     event Graduated(uint256 totalMinted, uint256 lpBurned, uint256 devBNB);
-    event FeesProcessed(uint256 tokensSwapped, uint256 bnbReceived);
     event BuyBackAndBurn(uint256 bnbIn, uint256 tokensOut);
 
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
@@ -107,6 +107,7 @@ contract StocksToken {
     function setDev(address a) external onlyOwner { if (configFreeze) revert Frozen(); devWallet = a; }
     function setMarketing(address a) external onlyOwner { if (configFreeze) revert Frozen(); marketingWallet = a; }
     function setLaunchpad(address a) external onlyOwner { if (configFreeze) revert Frozen(); launchpad = a; }
+    function setFeeReceiver(address a) external onlyOwner { feeReceiver = a; }
     function setPair(address a) external onlyOwner { if (configFreeze) revert Frozen(); pair = a; isPool[a] = true; }
     function addPool(address a) external onlyOwner { if (configFreeze) revert Frozen(); isPool[a] = true; }
     function removePool(address a) external onlyOwner { if (configFreeze) revert Frozen(); isPool[a] = false; }
@@ -215,36 +216,39 @@ contract StocksToken {
     function setGraduationThreshold(uint256 t) external onlyOwner { if (configFreeze) revert Frozen(); if (t < 0.001 ether) revert Guard(); minCapBNB = t; }
 
     receive() external payable {
-        if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB) swapIn(msg.value);
+        if (msg.value > 0 && msg.sender != address(router) && msg.sender != WBNB && msg.sender != address(feeReceiver)) swapIn(msg.value);
     }
 
     function swapIn(uint256 bnbAmount) public payable nonReentrant {
-        require(mintEnabled, "MOFF");
-        require(block.timestamp >= mintStart && block.timestamp <= mintEnd, "MWIN");
-        require(!mintCapped, "CAPED");
-        require(bnbAmount >= minMint && bnbAmount <= maxMint, "MAMT");
-        if (whitelistOnly) require(whitelist[msg.sender], "MWL");
-        require(msg.value == bnbAmount, "VAL");
+        if (!mintEnabled) revert Guard();
+        if (block.timestamp < mintStart || block.timestamp > mintEnd) revert Guard();
+        if (mintCapped) revert Guard();
+        if (bnbAmount < minMint || bnbAmount > maxMint) revert Guard();
+        if (whitelistOnly && !whitelist[msg.sender]) revert Guard();
+        if (msg.value != bnbAmount) revert Guard();
         configFreeze = true;   // 首次 mint 起冻结全部配置(去中心化：发射后不能再改税率/分配/营销/分红)
 
         uint256 toCap = capBNB - totalMintedBNB;
         uint256 use = bnbAmount > toCap ? toCap : bnbAmount;
-        require(use > 0, "CAPED");
+        if (use == 0) revert Guard();
 
         totalMintedBNB += use;
         mintedBNB[msg.sender] += use;
         refunded[msg.sender] = false;
-        if (walletCap > 0) require(mintedBNB[msg.sender] <= walletCap, "WCAP");
+        if (walletCap > 0 && mintedBNB[msg.sender] > walletCap) revert Guard();
 
         // Fixed 50% token mint share, pro-rata by BNB.
         bool last = totalMintedBNB >= capBNB;
         uint256 tokens = last ? MINT_RESERVE - mintTokensDistributed : (MINT_RESERVE * use) / capBNB;
-        require(balanceOf[address(this)] >= tokens, "LOW");
+        if (balanceOf[address(this)] < tokens) revert Guard();
         balanceOf[address(this)] -= tokens;
         balanceOf[msg.sender] += tokens;
         mintedTokenAmount[msg.sender] += tokens;
         mintTokensDistributed += tokens;
         emit Transfer(address(this), msg.sender, tokens);
+        // Mint transfers bypass _transfer, so explicitly refresh the holder
+        // dividend position for newly minted accounts.
+        if (_divs[DIV_HOLD].enabled) _refreshHold(msg.sender);
 
         // BNB split per the launch config (poolPercent): poolPercent% enters the
         // pool, the rest goes to the dev wallet now. Only the pool-entered BNB is
@@ -264,8 +268,7 @@ contract StocksToken {
         // and graduation forwards it to the dev wallet anyway.
         if (devBNB > 0) {
             address devRecv = devWallet == address(0) ? owner : devWallet;
-            (bool ok,) = payable(devRecv).call{value: devBNB}("");
-            if (ok) {} // dev cut handled
+            payable(devRecv).call{value: devBNB}("");
         }
 
         if (last) _graduate();
@@ -274,7 +277,6 @@ contract StocksToken {
             (bool ok,) = payable(msg.sender).call{value: msg.value - use}("");
             require(ok, "REF");
         }
-        emit Minted(msg.sender, use, tokens);
     }
 
     function _addLiquidityLive(uint256 lpBNB, uint256 tokensForLP) internal {
@@ -291,7 +293,7 @@ contract StocksToken {
             uint256 baseBefore = IERC20External(baseToken).balanceOf(address(this));
             router.swapExactETHForTokens{value: lpBNB}(0, path, address(this), block.timestamp + 300);
             uint256 baseBal = IERC20External(baseToken).balanceOf(address(this)) - baseBefore;
-            require(baseBal > 0, "SWAP");
+            if (baseBal == 0) revert Guard();
             allowanceRouter(baseToken);
             (,, uint256 liq) = router.addLiquidity(address(this), baseToken, tokensForLP, baseBal, 0, 0, address(this), block.timestamp + 300);
             totalLPToken += liq;
@@ -335,11 +337,11 @@ contract StocksToken {
 
     // Refund only the BNB that actually entered the pool (dev-forwarded BNB is not refundable).
     function refund() external nonReentrant returns (bool) {
-        require(!mintCapped, "CAPED");
-        require(block.timestamp > refundDeadline, "WAIT");
+        if (mintCapped) revert Guard();
+        if (block.timestamp <= refundDeadline) revert Guard();
         uint256 amt = mintedPoolBNB[msg.sender];
-        require(amt > 0, "NONE");
-        require(!refunded[msg.sender], "DONE");
+        if (amt == 0) revert Guard();
+        if (refunded[msg.sender]) revert Guard();
         refunded[msg.sender] = true;
         mintedPoolBNB[msg.sender] = 0;
 
@@ -355,7 +357,7 @@ contract StocksToken {
         uint256 lpTokens = mintedLPTokenAmount[msg.sender];
         mintedLPTokenAmount[msg.sender] = 0;
         uint256 held = balanceOf[msg.sender];
-        require(held >= tokens, "SOLD");
+        if (held < tokens) revert Guard();
         if (tokens > 0) {
             balanceOf[msg.sender] -= tokens;
             balanceOf[address(this)] += tokens;
@@ -370,7 +372,6 @@ contract StocksToken {
         if (availableBNB < amt) _withdrawLPForRefund(amt, prevTotal);
         (bool ok,) = payable(msg.sender).call{value: amt}("");
         require(ok, "RF");
-        emit Refunded(msg.sender, amt);
         return true;
     }
 
@@ -412,15 +413,15 @@ contract StocksToken {
     }
 
     function _transfer(address from, address to, uint256 amount) internal {
-        require(balanceOf[from] >= amount, "BAL");
-        require(to != address(0), "ZERO");
+        if (balanceOf[from] < amount) revert Guard();
+        if (to == address(0)) revert Guard();
 
         // 未打满毕业前锁定交易（对齐参考合约 startTradeBlock==0 的 gating）：
         // 只放行与合约自营流动相关的转账——合约发起(from==this: mint 发放/加池/内部回流)，
         // 或转入合约(to==this: 退款回收 LP)。用户对池子的买/卖、以及普通 P2P 一律 revert，
         // 杜绝"还没打满就能在 DEX 买卖"。毕业(打满)后放开。
         if (!graduated && from != address(this) && to != address(this)) {
-            revert("LOCKED");
+            revert Guard();   // 未毕业锁定
         }
 
         if (_inSwap) {
@@ -479,17 +480,33 @@ contract StocksToken {
         }
 
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
-        if (isPool[to] && _divs[DIV_LIQ].enabled) _recordDivShare(DIV_LIQ, from, amount);
+        // LP dividends are based on the user's LP-token balance, never on
+        // the amount sold into the pair.
+        if (isPool[to] && _divs[DIV_LIQ].enabled && pair != address(0) && _divs[DIV_LIQ].shares[from] == 0) {
+            uint256 lpBal = IERC20External(pair).balanceOf(from);
+            if (lpBal > 0) _recordDivShare(DIV_LIQ, from, lpBal);
+        }
     }
 
-    // Loopback to turn a token chunk into the POOL BASE (pair denominator).
-    //  - base==WBNB : 结构上无法把 BNB 送进本币合约(Pancake INVALID_TO：本币在 T/WBNB 对里) → 返回 0。
-    //  - base!=WBNB(镜像底): token->base->WBNB 多跳把原生 BNB 收进合约(最后一段 base/WBNB 不含本币，合法)，
-    //    再 WBNB->base 收回 base 供回流/分红；两跳的最后一段都不含本币，规避 INVALID_TO。
+    // Convert a tax-token chunk into the configured pool asset.
+    // For a BNB pool, the pool asset is WBNB and the router's token->ETH
+    // path returns native BNB directly. For an ERC20 pool, use the safe
+    // token->base->WBNB->base round trip used by the rest of this contract.
     function _swapToBase(uint256 amount) internal returns (uint256 out) {
         if (amount == 0 || balanceOf[address(this)] < amount) return 0;
         _inSwap = true;
-        if (baseToken != WBNB) {
+        if (baseToken == WBNB) {
+            // 本币在 (token,WBNB) 对里，Pancake 拒绝 to=本币 收 BNB(INVALID_TO)。
+            // 路由到独立 FeeReceiver，再 withdraw() 拉回，绕开该限制。
+            if (feeReceiver == address(0)) revert Guard();
+            address[] memory p = new address[](2);
+            p[0] = address(this); p[1] = WBNB;
+            uint256 before = address(this).balance;
+            router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, p, feeReceiver, block.timestamp + 300);
+            (bool ok,) = feeReceiver.call(abi.encodeWithSelector(0x3ccfd60b)); // withdraw()
+            require(ok, "FR");
+            out = address(this).balance - before;
+        } else {
             address[] memory p = new address[](3);
             p[0] = address(this); p[1] = baseToken; p[2] = WBNB;
             uint256 beforeBnb = address(this).balance;
@@ -612,7 +629,8 @@ contract StocksToken {
             }
             _processDividends(activeDiv, 100);
         }
-        emit FeesProcessed(amt, 0);
+        // Fee buckets are decremented above; individual payout events provide
+        // the auditable trail without adding another aggregate log.
     }
 
     // Reference-style non-blocking fee flush: the real work runs via an EXTERNAL
@@ -627,7 +645,7 @@ contract StocksToken {
     }
 
     function _processFeesDispatch() external {
-        if (msg.sender != address(this)) revert("SELF");
+        if (msg.sender != address(this)) revert Guard();
         _processFees();
     }
 
@@ -638,7 +656,6 @@ contract StocksToken {
         path[0] = WBNB;
         path[1] = address(this);
         router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnbIn}(minAmountOut[address(this)], path, DEAD, block.timestamp + 300);
-        emit BuyBackAndBurn(bnbIn, bnbIn);
         _inSwap = false;
     }
 
@@ -698,7 +715,7 @@ contract StocksToken {
 
     function enableDiv(uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner {
         if (configFreeze) revert Frozen();   // 首次 mint 起冻结分红模式/奖励币/门槛
-        require(id >= DIV_HOLD && id <= DIV_BURN, "ID");
+        if (id < DIV_HOLD || id > DIV_BURN) revert Guard();
         if (f) {
             for (uint8 other = DIV_HOLD; other <= DIV_BURN; other++) {
                 if (other != id && _divs[other].enabled) {
@@ -827,15 +844,15 @@ contract StocksToken {
 
     function depositDiv(uint8 id) external payable nonReentrant {
         DivData storage d = _divs[id];
-        require(d.rewardToken == WBNB);
-        require(d.enabled, "OFF");
+        if (d.rewardToken != WBNB) revert Guard();
+        if (!d.enabled) revert Guard();
         _creditDividend(id, msg.value);
         _processDividends(id, 100);
     }
 
     function claimDiv(uint8 id) external nonReentrant {
         DivData storage d = _divs[id];
-        require(d.enabled, "DISABLED");
+        if (!d.enabled) revert Guard();
         uint256 userShare = d.shares[msg.sender];
         if (userShare == 0) return;
         if (d.pendingReward == 0) return;
@@ -848,7 +865,7 @@ contract StocksToken {
     }
 
     function _payout(uint8 id, address user, uint256 amount) internal {
-        require(_payoutRaw(id, user, amount), "PAY");
+        if (!_payoutRaw(id, user, amount)) revert Guard();
     }
 
     function _settleHold(address user) internal {

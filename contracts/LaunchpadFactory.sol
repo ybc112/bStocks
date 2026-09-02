@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "./StocksToken.sol";
 import "./TokenDeployer.sol";
+import "./FeeReceiver.sol";
 
 contract LaunchpadFactory {
     string public constant platformName = "bStocks";
@@ -17,6 +18,7 @@ contract LaunchpadFactory {
     event ProjectLaunched(address indexed token, address indexed dev, address baseToken);
     event ProjectLaunched2(address indexed token, address indexed dev, address indexed baseToken, bytes32 salt, bool deterministic, string name, string symbol);
     event FeeCollected(address indexed project, uint256 value, uint256 community, uint256 referral);
+    event FeeReceiverAttached(address indexed token, address indexed receiver);
 
     uint256 public platformAccPerShare;
     uint256 public platformTotalShares;
@@ -131,6 +133,7 @@ contract LaunchpadFactory {
         require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
         require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
         t.acceptOwnership();
+        _attachFeeReceiver(t);
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;
@@ -158,6 +161,7 @@ contract LaunchpadFactory {
         require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
         require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
         t.acceptOwnership();
+        _attachFeeReceiver(t);
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;
@@ -171,6 +175,15 @@ contract LaunchpadFactory {
     function handover(address t, address dev) external onlyOwner { _token(t).transferOwnership(dev); }
 
     function _token(address t) internal pure returns (StocksToken) { return StocksToken(payable(t)); }
+
+    // The receiver must be owned by the token itself: StocksToken calls
+    // withdraw() after Router sends BNB there, while the Pair rejects sending
+    // WBNB/BNB directly to the token contract.
+    function _attachFeeReceiver(StocksToken t) internal {
+        FeeReceiver receiver = new FeeReceiver(address(t));
+        t.setFeeReceiver(address(receiver));
+        emit FeeReceiverAttached(address(t), address(receiver));
+    }
 
     function configMint(address t, bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyProjectOwner(t) {
         _token(t).setMintConfig(wl, poolPct, lpRatio, minM, maxM, wCap, cap, duration);
@@ -224,6 +237,7 @@ contract LaunchpadFactory {
         require(address(t.router()) == address(router) && address(t.pancakeFactory()) == factoryERC20, "DEX");
         require(t.devWallet() == _dev && t.marketingWallet() == _marketing && t.baseToken() == base, "ARGS");
         t.acceptOwnership();
+        _attachFeeReceiver(t);
         t.setLaunchpad(address(this));
         projects.push(tokenAddr);
         isProject[tokenAddr] = true;
