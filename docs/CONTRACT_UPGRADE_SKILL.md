@@ -25,6 +25,7 @@
   - `base==镜像币(≠WBNB)`：`token→base`（**1跳直换镜像币**，对齐 SUNXIAOSHENG"回流=镜像币"，不要拖去 WBNB 再来回折）；营销/买返/平台这几份走 `_baseToWBNB`(base→BNB) 再发，回流回填 `_backfillLiquidity` 直接用镜像币 `addLiquidity(token, base)` 加池，分红 `reward==base` 时直接以镜像币派发。
 - **镜像底池的分红 reward 仅支持 `base` 或 `WBNB`**（不受限的任意 ERC20 分红仅 BNB 底支持），否则会 `_baseToWBNB` 折 BNB 后派发。
 - **合约大小卡紧 24KB**：加功能要同步删非核心函数（如 `flushFeeReserves`/`depositDivToken`/`pendingDiv`/`_selfTokenDividendReserve` 等调试/冗余代码），`runtime <= 24576`，否则 `CreateContractSizeLimit` 无法上链。
+- **未打满毕业前锁定交易**：`_transfer` 在 `!graduated && from != address(this) && to != address(this)` 时 `revert("LOCKED")`。只放行合约自营流动(from==this: mint 发放/加池/内部回流)和转入合约(to==this: 退款回收 LP)；用户对池子买卖 + 普通 P2P 一律拦截，杜绝"没打满就能 DEX 交易"。`_graduate()` 先 `graduated=true` 再动 LP，不会自锁；毕业(打满)后放开。（对齐参考合约 `startTradeBlock==0` 的 gating）
 - 打满即 `owner = DEAD`（自动丢权限）。
 
 ---

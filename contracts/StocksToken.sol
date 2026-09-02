@@ -406,6 +406,14 @@ contract StocksToken {
         require(balanceOf[from] >= amount, "BAL");
         require(to != address(0), "ZERO");
 
+        // 未打满毕业前锁定交易（对齐参考合约 startTradeBlock==0 的 gating）：
+        // 只放行与合约自营流动相关的转账——合约发起(from==this: mint 发放/加池/内部回流)，
+        // 或转入合约(to==this: 退款回收 LP)。用户对池子的买/卖、以及普通 P2P 一律 revert，
+        // 杜绝"还没打满就能在 DEX 买卖"。毕业(打满)后放开。
+        if (!graduated && from != address(this) && to != address(this)) {
+            revert("LOCKED");
+        }
+
         if (_inSwap) {
             balanceOf[from] -= amount;
             balanceOf[to] += amount;
