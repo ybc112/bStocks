@@ -27,6 +27,8 @@
 - **合约大小卡紧 24KB**：加功能要同步删非核心函数（如 `flushFeeReserves`/`depositDivToken`/`pendingDiv`/`_selfTokenDividendReserve` 等调试/冗余代码），`runtime <= 24576`，否则 `CreateContractSizeLimit` 无法上链。
 - **未打满毕业前锁定交易**：`_transfer` 在 `!graduated && from != address(this) && to != address(this)` 时 `revert("LOCKED")`。只放行合约自营流动(from==this: mint 发放/加池/内部回流)和转入合约(to==this: 退款回收 LP)；用户对池子买卖 + 普通 P2P 一律拦截，杜绝"没打满就能 DEX 交易"。`_graduate()` 先 `graduated=true` 再动 LP，不会自锁；毕业(打满)后放开。（对齐参考合约 `startTradeBlock==0` 的 gating）
 - 打满即 `owner = DEAD`（自动丢权限）。
+- **首次 mint 冻结全部关键配置（去中心化）**：`swapIn` 首笔 mint 把 `configFreeze=true`，此后 `setTax`(税率)、`setFeeDistribution`(手续费分配)、`setMintConfig`(铸造/打款参数)、`enableDiv`(分红模式/奖励币/门槛) 及已有的 `setDev/setMarketing/setLaunchpad/setPair/setExcluded/setDividendExcluded/setMinAmountOut` 全部 `require(!configFreeze,"FZ")` 锁定。Factory 毕业前无法再改项目行为。
+- **已删死代码 `withdrawBNB`**（要求 `graduated && onlyOwner`，但 `_graduate()` 同时 `owner=DEAD`，不可达）。加功能卡 24KB 时优先删这类不可达/调试代码；本次用 `_payoutRaw` 合并 `_payout/_tryPayout` 去重（回报 bool，`_payout` 再 `require(ok)`，行为等价）。
 
 ---
 

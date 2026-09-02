@@ -100,17 +100,17 @@ contract StocksToken {
 
     function transferOwnership(address a) external onlyOwner { pendingOwner = a; }
     function acceptOwnership() external { require(msg.sender == pendingOwner, "NP"); owner = pendingOwner; pendingOwner = address(0); }
-    function setDev(address a) external onlyOwner { devWallet = a; }
-    function setMarketing(address a) external onlyOwner { marketingWallet = a; }
-    function setLaunchpad(address a) external onlyOwner { launchpad = a; }
-    function setPair(address a) external onlyOwner { pair = a; isPool[a] = true; }
-    function addPool(address a) external onlyOwner { isPool[a] = true; }
-    function removePool(address a) external onlyOwner { isPool[a] = false; }
-    function setExcluded(address a, bool f) external onlyOwner { isExcludedFromFees[a] = f; }
+    function setDev(address a) external onlyOwner { require(!configFreeze,"FZ"); devWallet = a; }
+    function setMarketing(address a) external onlyOwner { require(!configFreeze,"FZ"); marketingWallet = a; }
+    function setLaunchpad(address a) external onlyOwner { require(!configFreeze,"FZ"); launchpad = a; }
+    function setPair(address a) external onlyOwner { require(!configFreeze,"FZ"); pair = a; isPool[a] = true; }
+    function addPool(address a) external onlyOwner { require(!configFreeze,"FZ"); isPool[a] = true; }
+    function removePool(address a) external onlyOwner { require(!configFreeze,"FZ"); isPool[a] = false; }
+    function setExcluded(address a, bool f) external onlyOwner { require(!configFreeze,"FZ"); isExcludedFromFees[a] = f; }
     // 分红排除名单设置：owners might use this to exclude a lock contract or an exchange
     // (cex) address so those never accrue dividends. 黑洞/池子/路由已默认自动排除。
-    function setDividendExcluded(address a, bool f) external onlyOwner { excludedFromDividends[a] = f; }
-    function setMinAmountOut(address token, uint256 minOut) external onlyOwner { minAmountOut[token] = minOut; }
+    function setDividendExcluded(address a, bool f) external onlyOwner { require(!configFreeze,"FZ"); excludedFromDividends[a] = f; }
+    function setMinAmountOut(address token, uint256 minOut) external onlyOwner { require(!configFreeze,"FZ"); minAmountOut[token] = minOut; }
 
     function _mint(address to, uint256 amount) internal { require(totalSupply + amount <= MAX_SUPPLY, "MAX"); totalSupply += amount; balanceOf[to] += amount; emit Transfer(address(0), to, amount); }
     function _burn(address a, uint256 amount) internal { totalSupply -= amount; balanceOf[a] -= amount; emit Transfer(a, address(0), amount); }
@@ -121,6 +121,7 @@ contract StocksToken {
     uint256 public constant TAX_DIVISOR = 1000;
 
     function setTax(uint256 b, uint256 s, uint256 t) external onlyOwner {
+        require(!configFreeze,"FZ");   // 首次 mint 起冻结税率
         require(b <= 250 && s <= 250 && t <= 250, "TX");
         buyTax = b; sellTax = s; transferTax = t;
     }
@@ -150,6 +151,7 @@ contract StocksToken {
     }
 
     function setFeeDistribution(uint256 m, uint256 bb, uint256 bf, uint256 dv) external onlyOwner {
+        require(!configFreeze,"FZ");   // 首次 mint 起冻结手续费分配
         require(m + bb + bf + dv == TAX_DIVISOR - platformShare);
         marketingShare = m;
         buyBackShare = bb;
@@ -174,6 +176,7 @@ contract StocksToken {
     uint256 public constant MINT_REFUND_WINDOW = 24 hours;
     bool public mintCapped;
     bool public graduated;
+    bool public configFreeze;   // 首次 mint 后为 true，冻结税/分配/营销/分红配置
     uint256 public totalMintedBNB;
     uint256 public totalPoolBNB;
     uint256 public totalLPToken;
@@ -189,6 +192,7 @@ contract StocksToken {
     event MintConfigSet(uint256 capBNB, uint256 poolPercent);
 
     function setMintConfig(bool wl, uint256 poolPct, uint256 lpRatio, uint256 minM, uint256 maxM, uint256 wCap, uint256 cap, uint256 duration) external onlyOwner {
+        require(!configFreeze,"FZ");   // 首次 mint 起冻结铸造参数
         if (poolPct < 600 || poolPct > TAX_DIVISOR || lpRatio != TAX_DIVISOR || minM < 0.001 ether || maxM < minM || (wCap != 0 && wCap < maxM) || cap < minCapBNB) revert InvalidMintConfig();
         whitelistOnly = wl;
         poolPercent = poolPct;
@@ -217,6 +221,7 @@ contract StocksToken {
         require(bnbAmount >= minMint && bnbAmount <= maxMint, "MAMT");
         if (whitelistOnly) require(whitelist[msg.sender], "MWL");
         require(msg.value == bnbAmount, "VAL");
+        configFreeze = true;   // 首次 mint 起冻结全部配置(去中心化：发射后不能再改税率/分配/营销/分红)
 
         uint256 toCap = capBNB - totalMintedBNB;
         uint256 use = bnbAmount > toCap ? toCap : bnbAmount;
@@ -669,6 +674,7 @@ contract StocksToken {
         uint256 cursor;                       // 自动派发的游标
         address[] holders;                    // 有分红的持有人队列
         mapping(address => bool) inHolders;   // 是否在队列
+        mapping(address => uint256) holderIndex; // 队列下标(O(1)移除)
         mapping(address => uint256) shares;
         mapping(address => uint256) paidPerShare;
     }
@@ -685,6 +691,7 @@ contract StocksToken {
     }
 
     function enableDiv(uint8 id, address rewardToken, uint256 minEligible, bool f) external onlyOwner {
+        require(!configFreeze,"FZ");   // 首次 mint 起冻结分红模式/奖励币/门槛
         require(id >= DIV_HOLD && id <= DIV_BURN, "ID");
         if (f) {
             for (uint8 other = DIV_HOLD; other <= DIV_BURN; other++) {
@@ -746,16 +753,24 @@ contract StocksToken {
         DivData storage d = _divs[id];
         if (d.inHolders[acct]) return;
         d.inHolders[acct] = true;
+        d.holderIndex[acct] = d.holders.length;
         d.holders.push(acct);
     }
+    // O(1) 移除：把队尾移到被删位再 pop，维护 holderIndex，避免 O(n) 线性扫描导致 Gas 膨胀
     function _divHoldersRemove(uint8 id, address acct) internal {
         DivData storage d = _divs[id];
         if (!d.inHolders[acct]) return;
-        d.inHolders[acct] = false;
-        uint256 n = d.holders.length;
-        for (uint256 i = 0; i < n; i++) {
-            if (d.holders[i] == acct) { d.holders[i] = d.holders[n - 1]; d.holders.pop(); break; }
+        uint256 idx = d.holderIndex[acct];
+        uint256 last = d.holders.length - 1;
+        if (idx != last) {
+            address moved = d.holders[last];
+            d.holders[idx] = moved;
+            d.holderIndex[moved] = idx;
+            if (idx < d.cursor) d.cursor = idx;   // 游标回调，避免跳过
         }
+        d.holders.pop();
+        delete d.holderIndex[acct];
+        d.inHolders[acct] = false;
     }
     function _dividendDue(DivData storage d, address acct) internal view returns (uint256 due) {
         uint256 s = d.shares[acct];
@@ -763,8 +778,9 @@ contract StocksToken {
         uint256 gross = (s * d.accPerShare) / DIV_PRECISION;
         due = gross > d.paidPerShare[acct] ? gross - d.paidPerShare[acct] : 0;
     }
-    // 软派发：某持有人收不到时不回退整批，留到下次再发
-    function _tryPayout(uint8 id, address user, uint256 amount) internal returns (bool) {
+    // 底层派发：原生代币/WBNB/ERC20。返回 bool 而非 revert，供自动派发跳过；
+    // 手动领取(_payout)再 require(ok)。消除 _tryPayout / _payout 的重复代码。
+    function _payoutRaw(uint8 id, address user, uint256 amount) internal returns (bool) {
         if (amount == 0) return true;
         DivData storage d = _divs[id];
         if (d.rewardToken == address(0)) {
@@ -775,11 +791,16 @@ contract StocksToken {
         } else if (d.rewardToken == WBNB) {
             (bool ok,) = payable(user).call{value: amount}("");
             return ok;
-        } else {
-            try IERC20External(d.rewardToken).transfer(user, amount) returns (bool ok) { return ok; } catch { return false; }
         }
+        (bool balOk, bytes memory balData) = address(d.rewardToken).staticcall(abi.encodeWithSelector(0x70a08231, address(this)));
+        if (!balOk || balData.length < 32) return false;
+        if (abi.decode(balData, (uint256)) < amount) return false;
+        (bool tOk, bytes memory ret) = address(d.rewardToken).call(abi.encodeWithSelector(0xa9059cbb, user, amount));
+        if (!tOk) return false;
+        if (ret.length != 0 && !abi.decode(ret, (bool))) return false;
+        return true;
     }
-    // 自动派发：每次最多处理 maxIter 个持有人，用游标续跑（参考合约 process）
+    // 软派发：某持有人收不到时不回退整批，留到下次再发
     function _processDividends(uint8 id, uint256 maxIter) internal {
         DivData storage d = _divs[id];
         if (!d.enabled) return;
@@ -790,7 +811,7 @@ contract StocksToken {
             if (a != address(0) && !excludedFromDividends[a]) {
                 uint256 due = _dividendDue(d, a);
                 if (due > 0 && d.pendingReward >= due) {
-                    if (_tryPayout(id, a, due)) { d.paidPerShare[a] = due + d.paidPerShare[a]; d.pendingReward -= due; }
+                    if (_payoutRaw(id, a, due)) { d.paidPerShare[a] = due + d.paidPerShare[a]; d.pendingReward -= due; }
                 }
             }
             d.cursor++;
@@ -821,23 +842,7 @@ contract StocksToken {
     }
 
     function _payout(uint8 id, address user, uint256 amount) internal {
-        if (amount == 0) return;
-        DivData storage d = _divs[id];
-        if (d.rewardToken == address(0)) {
-            balanceOf[address(this)] -= amount;
-            balanceOf[user] += amount;
-            emit Transfer(address(this), user, amount);
-        } else if (d.rewardToken == WBNB) {
-            (bool ok,) = payable(user).call{value: amount}("");
-            require(ok, "PAY");
-        } else {
-            (bool balOk, bytes memory balData) = address(d.rewardToken).staticcall(abi.encodeWithSelector(0x70a08231, address(this)));
-            require(balOk && balData.length >= 32);
-            uint256 erc20Bal = abi.decode(balData, (uint256));
-            require(erc20Bal >= amount, "BAL");
-            (bool tOk, bytes memory ret) = address(d.rewardToken).call(abi.encodeWithSelector(0xa9059cbb, user, amount));
-            require(tOk && (ret.length == 0 || abi.decode(ret, (bool))));
-        }
+        require(_payoutRaw(id, user, amount), "PAY");
     }
 
     function _settleHold(address user) internal {
@@ -889,13 +894,5 @@ contract StocksToken {
             require(!(_divs[id].rewardToken == token && _divs[id].pendingReward > 0));
         }
         require(IERC20External(token).transfer(msg.sender, amount), "RESCUE");
-    }
-
-    function withdrawBNB(uint256 amount) external onlyOwner {
-        require(graduated);
-        uint256 reserved = _nativeDividendReserve();
-        require(amount <= address(this).balance - reserved, "BAL");
-        (bool ok,) = payable(msg.sender).call{value: amount}("");
-        require(ok, "WIT");
     }
 }

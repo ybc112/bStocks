@@ -10,7 +10,8 @@ module.exports = {
         enabled: true,
         runs: 1
       },
-      viaIR: true
+      viaIR: true,
+      metadata: { bytecodeHash: "none", appendCBOR: false }
     }
   },
   networks: {
