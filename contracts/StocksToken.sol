@@ -28,6 +28,10 @@ interface IERC20External {
 interface ILaunchpad {
     function onProjectFee(address project, address contributor, uint256 bnbValue) external payable;
 }
+interface IFeeReceiver {
+    function withdraw() external;
+    function withdrawToken(address token) external;
+}
 
 contract StocksToken {
     error InvalidMintConfig();
@@ -494,30 +498,27 @@ contract StocksToken {
     function _swapToBase(uint256 amount) internal returns (uint256 out) {
         if (amount == 0 || balanceOf[address(this)] < amount) return 0;
         _inSwap = true;
+        if (feeReceiver == address(0)) revert Guard();
         if (baseToken == WBNB) {
             // 本币在 (token,WBNB) 对里，Pancake 拒绝 to=本币 收 BNB(INVALID_TO)。
             // 路由到独立 FeeReceiver，再 withdraw() 拉回，绕开该限制。
-            if (feeReceiver == address(0)) revert Guard();
             address[] memory p = new address[](2);
             p[0] = address(this); p[1] = WBNB;
             uint256 before = address(this).balance;
             router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, p, feeReceiver, block.timestamp + 300);
-            (bool ok,) = feeReceiver.call(abi.encodeWithSelector(0x3ccfd60b)); // withdraw()
-            require(ok, "FR");
+            (bool ok,) = feeReceiver.call(abi.encodeWithSelector(IFeeReceiver.withdraw.selector));
+            if (!ok) revert Guard();
             out = address(this).balance - before;
         } else {
-            address[] memory p = new address[](3);
-            p[0] = address(this); p[1] = baseToken; p[2] = WBNB;
-            uint256 beforeBnb = address(this).balance;
-            router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, p, address(this), block.timestamp + 300);
-            uint256 gotBnb = address(this).balance - beforeBnb;
-            if (gotBnb > 0) {
-                address[] memory p2 = new address[](2);
-                p2[0] = WBNB; p2[1] = baseToken;
-                uint256 beforeBase = IERC20External(baseToken).balanceOf(address(this));
-                router.swapExactETHForTokens{value: gotBnb}(0, p2, address(this), block.timestamp + 300);
-                out = IERC20External(baseToken).balanceOf(address(this)) - beforeBase;
-            }
+            // 镜像底：token->base 送到 FeeReceiver（非 LP 成员，合法），再 withdrawToken(base) 拉回 base 本体。
+            // 不硬性桥 WBNB——薄/无 WBNB 深度的镜像底(如 NVDAB)不再因 hop2 换不出钱而死锁。
+            address[] memory p = new address[](2);
+            p[0] = address(this); p[1] = baseToken;
+            uint256 beforeBase = IERC20External(baseToken).balanceOf(address(this));
+            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, p, feeReceiver, block.timestamp + 300);
+            (bool ok,) = feeReceiver.call(abi.encodeWithSelector(IFeeReceiver.withdrawToken.selector, baseToken));
+            if (!ok) revert Guard();
+            out = IERC20External(baseToken).balanceOf(address(this)) - beforeBase;
         }
         _inSwap = false;
     }
