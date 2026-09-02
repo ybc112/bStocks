@@ -71,7 +71,6 @@ contract StocksToken {
     event Minted(address indexed user, uint256 bnb, uint256 tokens);
     event Refunded(address indexed user, uint256 bnb);
     event Graduated(uint256 totalMinted, uint256 lpBurned, uint256 devBNB);
-    event BuyBackAndBurn(uint256 bnbIn, uint256 tokensOut);
 
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
     modifier nonReentrant() { if (_reentrancy) revert Reentrant(); _reentrancy = true; _; _reentrancy = false; }
@@ -482,9 +481,9 @@ contract StocksToken {
         if (to == DEAD && _divs[DIV_BURN].enabled) _recordDivShare(DIV_BURN, from, amount);
         // LP dividends are based on the user's LP-token balance, never on
         // the amount sold into the pair.
-        if (isPool[to] && _divs[DIV_LIQ].enabled && pair != address(0) && _divs[DIV_LIQ].shares[from] == 0) {
+        if (isPool[to] && _divs[DIV_LIQ].enabled && pair != address(0)) {
             uint256 lpBal = IERC20External(pair).balanceOf(from);
-            if (lpBal > 0) _recordDivShare(DIV_LIQ, from, lpBal);
+            _setLiqShare(from, lpBal);
         }
     }
 
@@ -779,6 +778,31 @@ contract StocksToken {
         d.holderIndex[acct] = d.holders.length;
         d.holders.push(acct);
     }
+
+    // LP dividend weight follows the user's current LP-token balance, as in
+    // the reference tracker. Refreshing also handles LP additions/removals.
+    function _setLiqShare(address account, uint256 lpBal) internal {
+        DivData storage d = _divs[DIV_LIQ];
+        uint256 next = lpBal >= d.minEligible ? lpBal : 0;
+        uint256 old = d.shares[account];
+        if (old == next) return;
+        if (old > 0) {
+            uint256 due = _dividendDue(d, account);
+            if (due > 0 && d.pendingReward >= due && _payoutRaw(DIV_LIQ, account, due)) {
+                d.pendingReward -= due;
+            }
+        }
+        if (old > 0) d.totalShares -= old;
+        d.shares[account] = next;
+        d.paidPerShare[account] = (next * d.accPerShare) / DIV_PRECISION;
+        if (next > 0) {
+            d.totalShares += next;
+            _divHoldersPush(DIV_LIQ, account);
+        } else {
+            _divHoldersRemove(DIV_LIQ, account);
+        }
+    }
+
     // O(1) 移除：把队尾移到被删位再 pop，维护 holderIndex，避免 O(n) 线性扫描导致 Gas 膨胀
     function _divHoldersRemove(uint8 id, address acct) internal {
         DivData storage d = _divs[id];
@@ -853,6 +877,7 @@ contract StocksToken {
     function claimDiv(uint8 id) external nonReentrant {
         DivData storage d = _divs[id];
         if (!d.enabled) revert Guard();
+        if (id == DIV_LIQ && pair != address(0)) _setLiqShare(msg.sender, IERC20External(pair).balanceOf(msg.sender));
         uint256 userShare = d.shares[msg.sender];
         if (userShare == 0) return;
         if (d.pendingReward == 0) return;
