@@ -505,7 +505,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         nameEn: name,
         descZh: meta?.description || "",
         descEn: meta?.description || "",
-        cat: graduated ? "listed" : pct >= 0.8 ? "grad" : "new",
+        cat: graduated ? "listed" : pct >= 0.5 ? "grad" : "new",
         raised,
         goal,
         mcap,

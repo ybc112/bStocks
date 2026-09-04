@@ -67,8 +67,11 @@ export default function TokenBoard() {
   }, [refresh]);
 
   const list = useMemo(() => {
+    if (tab === "hot") {
+      // 热搜 = 有真实链上成交量的代币，按 8h 成交量倒序取前 12
+      return [...tokens].filter((x) => x.vol > 0).sort((a, b) => b.vol - a.vol).slice(0, 12);
+    }
     const f = tokens.filter((x) => x.cat === tab);
-    if (tab === "hot") return [...f].sort((a, b) => b.vol - a.vol);
     if (tab === "grad") return [...f].sort((a, b) => b.raised / b.goal - a.raised / a.goal);
     return f;
   }, [tokens, tab]);
@@ -76,6 +79,7 @@ export default function TokenBoard() {
   const counts = useMemo(() => {
     const m: Record<Cat, number> = { new: 0, grad: 0, listed: 0, hot: 0 };
     tokens.forEach((x) => m[x.cat]++);
+    m.hot = tokens.filter((x) => x.vol > 0).length;
     return m;
   }, [tokens]);
 
