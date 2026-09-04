@@ -128,6 +128,11 @@ contract FeeReceiver {
     // can inspect these values and retry after liquidity returns.
     mapping(uint8 => uint256) public failedAmount;
     mapping(uint8 => bytes32) public failedReason;
+    // Automatic settlement intentionally advances one bucket at a time.  A
+    // single user sell must not fan out into five independent AMM sells (the
+    // explorer/DEX then shows a misleading wall of "follow-up sells").  The
+    // cursor makes the work fair and keeps every bucket retryable.
+    uint8 public processCursor;
 
     address private constant DEAD = address(0x000000000000000000000000000000000000dEaD);
     uint256 private constant MAX_UINT = type(uint256).max;
@@ -231,67 +236,74 @@ contract FeeReceiver {
         if (selected == 0) return (0, 0, 0, 0, 0);
 
         uint256[5] memory avail;
-        uint256[5] memory take;
         avail[0] = p; avail[1] = m; avail[2] = b; avail[3] = l; avail[4] = d;
-        for (uint256 i = 0; i < 5; i++) take[i] = (avail[i] * selected) / sourceTotal;
-        uint256 assigned = take[0] + take[1] + take[2] + take[3] + take[4];
-        uint256 remainder = selected - assigned;
-        for (uint256 i = 0; i < 5 && remainder > 0; i++) {
-            uint256 room = avail[i] - take[i];
-            uint256 add = room < remainder ? room : remainder;
-            take[i] += add;
-            remainder -= add;
-        }
-        if (remainder != 0) revert InvalidRoute();
 
-        if (take[0] > 0) {
-            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runPlatform.selector, take[0], contributor));
-            if (ok && data.length >= 32) {
-                platformTokens = take[0];
-                _clearFailure(0);
-            } else {
-                _markFailure(0, take[0], data);
+        // Pick the next non-empty bucket, starting at the persisted cursor.
+        // Only this bucket is attempted in the automatic call.  A failed
+        // route advances the cursor too, so one broken mechanism cannot starve
+        // all of the healthy mechanisms behind it.
+        uint8 chosen = 5;
+        uint256 start = processCursor % 5;
+        for (uint256 off = 0; off < 5; off++) {
+            uint8 candidate = uint8((start + off) % 5);
+            if (avail[candidate] > 0) {
+                chosen = candidate;
+                break;
             }
         }
-        if (take[1] > 0) {
-            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runMarketing.selector, take[1]));
-            if (ok && data.length >= 32) {
-                marketingTokens = take[1];
-                _clearFailure(1);
+        if (chosen < 5) {
+            uint256 amount = avail[chosen] < selected ? avail[chosen] : selected;
+            processCursor = uint8((uint256(chosen) + 1) % 5);
+            if (chosen == 0) {
+                (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runPlatform.selector, amount, contributor));
+                if (ok && data.length >= 32) {
+                    platformTokens = amount;
+                    _clearFailure(0);
+                    emit BucketProcessed(0, amount, address(0), abi.decode(data, (uint256)));
+                } else {
+                    _markFailure(0, amount, data);
+                }
+            } else if (chosen == 1) {
+                (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runMarketing.selector, amount));
+                if (ok && data.length >= 32) {
+                    marketingTokens = amount;
+                    _clearFailure(1);
+                    emit BucketProcessed(1, amount, address(0), abi.decode(data, (uint256)));
+                } else {
+                    _markFailure(1, amount, data);
+                }
+            } else if (chosen == 2) {
+                (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runBuyback.selector, amount));
+                if (ok && data.length >= 32) {
+                    buybackTokens = amount;
+                    _clearFailure(2);
+                    emit BucketProcessed(2, amount, address(0), abi.decode(data, (uint256)));
+                } else {
+                    _markFailure(2, amount, data);
+                }
+            } else if (chosen == 3) {
+                (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runLiquidity.selector, amount));
+                if (ok && data.length >= 32) {
+                    liquidityTokens = amount;
+                    _clearFailure(3);
+                    emit BucketProcessed(3, amount, address(0), abi.decode(data, (uint256)));
+                } else {
+                    _markFailure(3, amount, data);
+                }
             } else {
-                _markFailure(1, take[1], data);
+                if (activeDividendId != 0) {
+                    (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runDividend.selector, amount, _divs[activeDividendId].rewardToken));
+                    if (ok && data.length >= 32) {
+                        dividendTokens = amount;
+                        _clearFailure(4);
+                        emit BucketProcessed(4, amount, _divs[activeDividendId].rewardToken, abi.decode(data, (uint256)));
+                    } else {
+                        _markFailure(4, amount, data);
+                    }
+                } else {
+                    _markFailure(4, amount, "");
+                }
             }
-        }
-        if (take[2] > 0) {
-            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runBuyback.selector, take[2]));
-            if (ok && data.length >= 32) {
-                buybackTokens = take[2];
-                _clearFailure(2);
-            } else {
-                _markFailure(2, take[2], data);
-            }
-        }
-        if (take[3] > 0) {
-            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runLiquidity.selector, take[3]));
-            if (ok && data.length >= 32) {
-                liquidityTokens = take[3];
-                _clearFailure(3);
-                emit BucketProcessed(3, take[3], address(0), abi.decode(data, (uint256)));
-            } else {
-                _markFailure(3, take[3], data);
-            }
-        }
-        if (take[4] > 0 && activeDividendId != 0) {
-            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this._runDividend.selector, take[4], _divs[activeDividendId].rewardToken));
-            if (ok && data.length >= 32) {
-                dividendTokens = take[4];
-                _clearFailure(4);
-                emit BucketProcessed(4, take[4], _divs[activeDividendId].rewardToken, abi.decode(data, (uint256)));
-            } else {
-                _markFailure(4, take[4], data);
-            }
-        } else if (take[4] > 0) {
-            _markFailure(4, take[4], "");
         }
         // Automatic payouts are best-effort.  A recipient that rejects a
         // native-token transfer must not roll back the already successful

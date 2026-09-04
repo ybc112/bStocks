@@ -2,8 +2,8 @@ import paramiko, posixpath, glob, os
 HOST="38.190.206.234"; PORT=54470; USER="root"; PWD="dp4fL26QcZYD"
 LOCAL=os.path.abspath("artifacts")
 REMOTE="/opt/bstocks/artifacts"
-NEW_F="0xd7029BfA0fa29511395348E3CfB7aa5165098925"
-NEW_D="0x34acAbc6bC0bCd25F4b6e9aB1A46f3aD2Fc1bC4B"
+NEW_F="0x191fAB46FE49179380Fc2Ab601C90bBf0CF7dDEC"
+NEW_D="0xBccC99278cfEc941E9E6A9E6636E825E7F9c0E9d"
 c=paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect(HOST,port=PORT,username=USER,password=PWD,timeout=30)
 sftp=c.open_sftp()
