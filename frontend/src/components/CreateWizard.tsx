@@ -118,7 +118,7 @@ export default function CreateWizard() {
     if (!isAddress(w.dev)) return `${t("wz_dev")}: ${t("err_addr")}`;
     if (w.mktOn && w.mktWallet && !isAddress(w.mktWallet)) return `${t("wz_mkt_wallet")}: ${t("err_addr")}`;
     if (w.holderToken === "custom" && !isAddress(w.customCa)) return `${t("wz_custom_ca")}: ${t("err_addr")}`;
-    if (w.capBNB < 0.1) return `${t("wz_goal")}: >= 0.1 BNB`;
+    if (w.capBNB < 0.01) return `${t("wz_goal")}: >= 0.01 BNB`;
     if (feeOverflow) return t("wz_allocation_warn");
     if (w.vanityOn && w.vanitySuffix.toLowerCase() !== "bbbb") return `${t("wz_vanity_suffix")}: bbbb`;
     return null;
@@ -529,8 +529,8 @@ export default function CreateWizard() {
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
                     <div className="flex items-baseline justify-between"><Lbl>毕业目标 (capBNB)</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.capBNB} BNB</span></div>
-                    <input type="range" min={0.1} max={50} step={0.01} value={w.capBNB} onChange={(e) => set({ capBNB: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">达到此金额即毕业上 PancakeSwap，最低 0.1 BNB</p>
+                    <input type="range" min={0.01} max={50} step={0.01} value={w.capBNB} onChange={(e) => set({ capBNB: +e.target.value })} className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">达到此金额即毕业上 PancakeSwap，最低 0.01 BNB</p>
                   </div>
                   <div>
                     <Lbl>Mint 配置（实时）</Lbl>

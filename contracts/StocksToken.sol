@@ -247,7 +247,7 @@ contract StocksToken {
     uint256 public maxMint;
     uint256 public walletCap;
     uint256 public capBNB;
-    uint256 public minCapBNB = 0.1 ether;
+    uint256 public minCapBNB = 0.01 ether;
     uint256 public mintStart;
     uint256 public mintEnd;
     uint256 public refundDeadline;

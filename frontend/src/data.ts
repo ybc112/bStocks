@@ -172,7 +172,7 @@ export const ADS: Ad[] = [
     d: { zh: "平台税点的 20% 拆分:15% 社区维护 + 5% 推广返佣,社区维护费注入平台分红池,按 BSTK 持仓比例发放。", en: "Platform's 20% tax cut: 15% community + 5% referral. Community portion flows to the dividend pool, paid pro-rata to BSTK holders." },
     to: "#mech", art: "pool", from: "rgba(46,230,168,.15)", to2: "rgba(46,230,168,0)" },
   {
-    id: 3, tag: { zh: "发射福利", en: "LAUNCH" }, t: { zh: "30 个零免费发射 · 毕业门槛最低 0.1 BNB", en: "Free 30-zero launch · graduation from 0.1 BNB" },
+    id: 3, tag: { zh: "发射福利", en: "LAUNCH" }, t: { zh: "30 个零免费发射 · 毕业门槛最低 0.01 BNB", en: "Free 30-zero launch · graduation from 0.1 BNB" },
     d: { zh: "Mint 实入池,未打满 24 小时可退款,项目方零成本试错。", en: "Mint funds go to real LP; 24h refund if not filled — zero-cost trial for creators." },
     to: "#create", art: "zeros", from: "rgba(56,225,255,.14)", to2: "rgba(56,225,255,0)" },
   {
