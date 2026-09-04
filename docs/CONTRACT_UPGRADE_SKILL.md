@@ -34,6 +34,12 @@
 - 打满即 `owner = DEAD`（自动丢权限）。
 - **首次 mint 冻结全部关键配置（去中心化）**：`swapIn` 首笔 mint 把 `configFreeze=true`，此后 `setTax`(税率)、`setFeeDistribution`(手续费分配)、`setMintConfig`(铸造/打款参数)、`enableDiv`(分红模式/奖励币/门槛) 及已有的 `setDev/setMarketing/setLaunchpad/setPair/setExcluded/setDividendExcluded/setMinAmountOut` 全部 `require(!configFreeze,"FZ")` 锁定。Factory 毕业前无法再改项目行为。
 - **已删死代码 `withdrawBNB`**（要求 `graduated && onlyOwner`，但 `_graduate()` 同时 `owner=DEAD`，不可达）。加功能卡 24KB 时优先删这类不可达/调试代码；本次用 `_payoutRaw` 合并 `_payout/_tryPayout` 去重（回报 bool，`_payout` 再 `require(ok)`，行为等价）。
+- **★★ FeeReceiver 引擎（新架构硬约束）★★**
+  - 分红账本/清税全部在每币独立的 `FeeReceiverProxy(impl, token)` 克隆里（owner=token），StocksToken 只留薄包装 → 主合约才压得下 24KB。
+  - **Factory 必须先用 `setFeeReceiverImplementation(impl)` 挂上实现，之后才能发币**，否则 `FRIMPL` 回退。可以先发新 Factory 再单独一笔挂（顺序允许）。
+  - **绝不把 `new FeeReceiver()` 嵌进 Factory 构造函数**：会把实现初始化代码(~24KB)编进 Factory 创世字节码，构造码 46KB，部署费直接翻 2-3 倍（历史教训：差点为这只 Factory 付 1.5 BNB 天价 gas）。实现是独立事务部署的通用引擎。
+  - **复用实现地址省钱**：只要 FeeReceiver 实现字节码没变，以后升级 Factory 直接 `setFeeReceiverImplementation(0x20BD…)` 复用同一实现（proxy 每币克隆，互不影响），**不用重部署实现**，一次省 ~0.019 BNB@3gwei。只有实现本身改动才需要重部署。
+  - 挂载后验收：`factory.feeReceiverImplementation() == impl`。
 
 ---
 
@@ -191,4 +197,4 @@ NEW_DEPLOYER.tokenCreationCodeHash == 新 creationHash，tokenCreationCodeLength
 
 ## 10. 下次改合约的“最小路径”速查
 
-改 Solidity → `npx hardhat compile` → 记录 creationHash/len → （若**改了链**先按 §2.1 改前端三件套+后端 env）→ 部署新 Factory + 新 Deployer（gasLimit 显式、chainId 对应 56/97、稳定 RPC、`setDeployer`、`setBaseTokenWhitelist`）→ 服务器：清 build-info 后传新 artifact + build-info、更新 `.env` 的 CHAIN_ID/FACTORY/DEPLOYER/RPC、重启 → 前端 `contracts.ts`(+`web3.ts`+`data.ts` 若换链) → build → commit(只加业务文件) → push → 用测试代币走通 `commitSalt → launchProjectDeterministicAndConfigure` + 毕业 + 买卖 + 分红排除/派发核验 → 让用户清前端缓存。
+改 Solidity → `npx hardhat compile` → 记录 creationHash/len → （若**改了链**先按 §2.1 改前端三件套+后端 env）→（若 FeeReceiver 实现字节码变化：单独部署新实现；若没变：**沿用 `0x20BDB22Ca829F6dd99bdAdDec512A6f8a5017979` 复用，不重部署**）→ 部署新 Factory + 新 Deployer（gasLimit 显式、chainId 对应 56/97、稳定 RPC、**`setFeeReceiverImplementation(impl)` 之后再发币**、`setDeployer`、`setBaseTokenWhitelist`）→ 服务器：清 build-info 后传新 artifact + build-info、更新 `.env` 的 CHAIN_ID/FACTORY/DEPLOYER/RPC、重启 → 前端 `contracts.ts`(+`web3.ts`+`data.ts` 若换链) → build → commit(只加业务文件) → push → 用测试代币走通 `commitSalt → launchProjectDeterministicAndConfigure` + 毕业 + 买卖 + 分红排除/派发核验 → 让用户清前端缓存。
