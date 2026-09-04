@@ -30,10 +30,13 @@ export default function TokenBoard() {
   const timerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
-    const fa = factoryRef.current || (await resolveFactoryAddress());
+    let fa = factoryRef.current;
+    if (!fa) { try { fa = await resolveFactoryAddress(); } catch { fa = ""; } }
     factoryRef.current = fa;
     if (!fa) { setNoFactory(true); setLoading(false); return; }
-    const r = await loadProjects(fa);
+    // 单次 RPC 抖动不要闪空整板:失败轮询保留上一次的列表
+    const r = await loadProjects(fa).catch(() => ({ tokens: [], factory: fa, error: "rpc" }));
+    if (r.error && !r.tokens.length) { setLoadErr(r.error); setLoading(false); return; }
     setTokens(r.tokens);
     setLoadErr(r.error || "");
     setLoading(false);
@@ -143,7 +146,7 @@ export default function TokenBoard() {
           const listed = tk.cat === "listed";
           const avUrl = tk.avatar ? avatarUrl(tk.ca) : null;
           return (
-            <Reveal key={tk.id} delay={i * 60}>
+            <Reveal key={tk.ca} delay={i * 60}>
               <button onClick={() => setSel(tk)}
                 className="card-lift group flex w-full flex-col rounded-2xl border border-line bg-panel/85 p-4 text-left">
                 <div className="flex items-start gap-3">

@@ -402,7 +402,7 @@ export type LoadResult = { tokens: Token[]; factory: string; error?: string };
 export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
   const provider = readOnlyProvider();
   const factory = factoryContract(provider, factoryAddr);
-  const metas = await fetchProjectsMeta();
+  const metas = await fetchProjectsMeta().catch(() => ({}));
   try {
     // 1) enumerate projects(0..N) via multicall — out-of-range calls fail softly
     const idxRes = await aggregate(
@@ -447,9 +447,11 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
     };
     const raw = list.map((a, i) => ({ addr: a, dec: decOf(i) }));
 
-    // 3) pair reserves + shared reads
-    const wbnb = (await factory.WBNB()) as string;
-    const latest = await provider.getBlockNumber();
+    // 3) pair reserves + shared reads (RPC 抖动时降级，不抛空整板)
+    let wbnb = "";
+    try { wbnb = (await factory.WBNB()) as string; } catch {}
+    let latest = 0;
+    try { latest = await provider.getBlockNumber(); } catch {}
     const pairStats = await fetchPairStats(
       provider,
       raw.map((r) => ({ token: r.addr, pair: (r.dec("pair").v[0] as string) ?? "" }))
@@ -479,9 +481,12 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         const isToken0 = stats.token0.toLowerCase() === r.addr.toLowerCase();
         const tokenReserve = isToken0 ? stats.r0 : stats.r1;
         const baseReserve = isToken0 ? stats.r1 : stats.r0;
-        if (tokenReserve > 0n) {
+        if (tokenReserve > 0n && baseReserve > 0n) {
           price = Number(formatUnits((baseReserve * 10n ** 18n) / tokenReserve, 18));
+          // 反常池/精度会让价格瞬间吓人，钳制掉,避免把卡片数据打乱
+          if (!isFinite(price) || price > 1e9 || price < 1e-12) price = 0;
           mcap = price * Number((g("totalSupply") as bigint) ?? 0n);
+          if (!isFinite(mcap)) mcap = 0;
         }
       }
 
