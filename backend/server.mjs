@@ -159,6 +159,37 @@ function msgIsPending(errText, guidText) {
   return String(errText || "").includes("Unable to locate") || String(guidText || "").includes("Unable to locate");
 }
 
+// ---- Self-healing verification poll ----
+// The in-memory poll loop dies on PM2 restart, leaving records stuck in
+// "submitted" forever even though BscScan actually verified the contract.
+// On boot (and periodically) recheck every "submitted" record that still has
+// a real GUID and fold the result back into the persisted store.
+const pollingGuids = new Map(); // key -> expiry ts
+async function resumePendingPolls() {
+  if (!BSCSCAN_API_KEY || !tokenVerifications.length) return;
+  const now = Date.now();
+  for (const rec of tokenVerifications) {
+    const guid = rec.verificationGuid;
+    if (rec.verificationStatus !== "submitted" || !guid) continue;
+    const key = String(rec.tokenAddress).toLowerCase();
+    if (pollingGuids.has(key) && pollingGuids.get(key) > now) continue;
+    pollingGuids.set(key, now + 90 * 1000);
+    const st = await checkVerifyStatus(guid).catch(() => "pending");
+    if (st === "verified") {
+      rec.verificationStatus = "verified";
+      rec.verificationError = null;
+      saveVerifyStore();
+    } else if (st.startsWith("Fail")) {
+      rec.verificationStatus = "failed";
+      rec.verificationError = st;
+      saveVerifyStore();
+    }
+  }
+}
+resumePendingPolls();
+setInterval(resumePendingPolls, 90 * 1000);
+console.error("[server] Resume-verify daemon started (rescues stuck 'submitted' records after restarts)");
+
 // ---- Avatar upload config ----
 const AVATAR_DIR = path.join(__dirname, "avatars");
 if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
