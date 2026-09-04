@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { assetOf, short } from "../data";
 import type { Token } from "../data";
-import { Contract, parseEther, isAddress } from "ethers";
+import { Contract, parseEther, formatEther, isAddress } from "ethers";
 import { AreaChart, Bar, CoinIcon, CopyBtn, Icon, Modal, useI18n, useToast } from "./ui";
 import { useWallet } from "./Header";
 import { TOKEN_ABI, FACTORY_ABI, avatarUrl, resolveFactoryAddress } from "../contracts";
@@ -23,6 +23,8 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const toast = useToast();
   const { addr, isBsc, getSigner } = useWallet();
   const [amt, setAmt] = useState(0.5);
+  const [mintMin, setMintMin] = useState(0.001);
+  const [mintMax, setMintMax] = useState(Number.POSITIVE_INFINITY);
   const [pending, setPending] = useState(false);
   const cd = useCountdown(tk.refundTs);
   const pool = assetOf(tk.pool);
@@ -36,6 +38,25 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const [wlBusy, setWlBusy] = useState(false);
   const [canManage, setCanManage] = useState(false);
   const [avatarFail, setAvatarFail] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    void (async () => {
+      try {
+        const c = new Contract(tk.ca, TOKEN_ABI, readOnlyProvider());
+        const [mi, ma] = await Promise.all([
+          c.minMint() as Promise<bigint>,
+          c.maxMint() as Promise<bigint>,
+        ]);
+        if (dead) return;
+        const min = Number(formatEther(mi));
+        const max = Number(formatEther(ma));
+        if (Number.isFinite(min) && min > 0) setMintMin(min);
+        if (Number.isFinite(max) && max > 0) setMintMax(max);
+        setAmt((v) => Math.min(Math.max(v, Number.isFinite(min) && min > 0 ? min : 0.001), Number.isFinite(max) && max > 0 ? max : v));
+      } catch { /* older/demo token: keep safe defaults */ }
+    })();
+    return () => { dead = true; };
+  }, [tk.ca]);
   useEffect(() => {
     let dead = false;
     void (async () => {
@@ -80,7 +101,10 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
   const doMint = async () => {
     if (!addr) { toast(t("need_wallet"), "warn"); return; }
     if (!isBsc) { toast(t("wrong_chain"), "warn"); return; }
-    if (amt <= 0 || pending) return;
+    if (amt < mintMin || (Number.isFinite(mintMax) && amt > mintMax) || pending) {
+      toast(`Mint 范围：${mintMin}–${Number.isFinite(mintMax) ? mintMax : "∞"} BNB`, "warn");
+      return;
+    }
     setPending(true);
     try {
       const signer = await getSigner();
@@ -319,7 +343,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
               <label className="text-[11.5px] font-semibold text-fog">{t("dt_amount")}</label>
               <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-line2 bg-abyss/60 px-3 py-2 focus-within:border-gold/60">
                 <input
-                  type="number" min={0.01} step={0.1} value={amt} disabled={!mintable}
+                  type="number" min={mintMin} max={Number.isFinite(mintMax) ? mintMax : undefined} step={mintMin} value={amt} disabled={!mintable}
                   onChange={(e) => setAmt(Math.max(0, +e.target.value))}
                   className="font-mono2 w-full bg-transparent text-lg font-bold text-snow disabled:opacity-40"
                 />
@@ -327,7 +351,7 @@ export default function TokenDetail({ token: tk, onClose, onMint }: { token: Tok
               </div>
               <div className="mt-2 flex gap-1.5">
                 {[0.1, 0.5, 1, 5].map((v) => (
-                  <button key={v} onClick={() => setAmt(v)} disabled={!mintable}
+                  <button key={v} onClick={() => setAmt(Math.min(Math.max(v, mintMin), Number.isFinite(mintMax) ? mintMax : v))} disabled={!mintable}
                     className={`font-mono2 flex-1 rounded-lg border py-1.5 text-xs font-bold transition disabled:opacity-30 ${amt === v ? "border-gold bg-gold/15 text-gold2" : "border-line text-fog hover:border-gold/40 hover:text-gold2"}`}>
                     {v}
                   </button>

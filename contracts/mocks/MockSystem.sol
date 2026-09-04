@@ -28,12 +28,27 @@ contract MockERC20 {
         if (al != type(uint256).max) { allowance[f][msg.sender] = al - a; }
         balanceOf[f] -= a; balanceOf[t] += a; emit Transfer(f, t, a); return true;
     }
+
+    // Pancake V2 pairs expose sync().  The lightweight LP token used by the
+    // unit tests is not a real pair, but providing a no-op keeps the mock
+    // compatible with the production launch-finalization path that syncs any
+    // token-side remainder after an imbalanced addLiquidity call.
+    function sync() external {}
 }
 
 contract MockFactory {
     mapping(address => mapping(address => address)) public pairs;
     function getPair(address a, address b) external view returns (address) { return pairs[a][b]; }
     function setPair(address a, address b, address p) external { pairs[a][b] = p; pairs[b][a] = p; }
+}
+
+// A tiny contract-controlled pool actor used by the integration tests to
+// exercise both buy and sell tax directions.  Real Pancake pairs perform the
+// same ERC20 transfer from their own address.
+contract MockPairActor {
+    function sendToken(address token, address to, uint256 amount) external {
+        IERC(token).transfer(to, amount);
+    }
 }
 
 contract MockRouter {
@@ -97,6 +112,12 @@ contract MockRouter {
         uint256 out = amountIn / tokenToEthRate;
         require(address(this).balance >= out, "NOBNB");
         payable(to).transfer(out);
+    }
+
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256 amountIn, uint256, address[] calldata path, address to, uint256) external {
+        IERC(path[0]).transferFrom(msg.sender, address(this), amountIn);
+        uint256 out = (amountIn / tokenToEthRate) * ethToTokenRate;
+        IERC(path[1]).transfer(to, out);
     }
 
     function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256, address[] calldata path, address to, uint256) external payable {

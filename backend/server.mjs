@@ -277,17 +277,24 @@ app.post("/api/upload/avatar", (req, res) => {
 
 // Serve avatar images
 app.use("/api/avatars", express.static(AVATAR_DIR, {
-  maxAge: "7d",
-  setHeaders: (res) => res.set("Cache-Control", "public, max-age=604800, immutable"),
+  // Uploaded token avatars may be replaced. Do not mark these URLs immutable.
+  maxAge: "1h",
+  setHeaders: (res) => res.set("Cache-Control", "public, max-age=3600"),
 }));
 
 app.get("/api/avatar/:token", (req, res) => {
   const token = String(req.params.token || "").toLowerCase();
   if (!ethers.isAddress(token)) return res.status(400).json({ error: "Invalid token address" });
   const filename = avatarIndex[token];
-  if (filename && fs.existsSync(path.join(AVATAR_DIR, filename))) return res.sendFile(path.join(AVATAR_DIR, filename));
+  if (filename && fs.existsSync(path.join(AVATAR_DIR, filename))) {
+    res.set("Cache-Control", "no-cache, must-revalidate");
+    return res.sendFile(path.join(AVATAR_DIR, filename));
+  }
   const legacy = path.join(AVATAR_DIR, token + ".webp");
-  if (fs.existsSync(legacy)) return res.sendFile(legacy);
+  if (fs.existsSync(legacy)) {
+    res.set("Cache-Control", "no-cache, must-revalidate");
+    return res.sendFile(legacy);
+  }
   return res.status(404).json({ error: "Avatar not found" });
 });
 
@@ -302,7 +309,11 @@ app.post("/api/avatar/:tokenAddress", (req, res) => {
       const src = path.join(AVATAR_DIR, req.file.filename);
       const ext = path.extname(req.file.filename) || ".webp";
       const filename = token + ext;
-      fs.renameSync(src, path.join(AVATAR_DIR, filename));
+      const dst = path.join(AVATAR_DIR, filename);
+      // Windows refuses rename-over-existing while Linux replaces it. Make
+      // replacement behavior deterministic on both hosts.
+      if (fs.existsSync(dst) && path.resolve(src) !== path.resolve(dst)) fs.unlinkSync(dst);
+      fs.renameSync(src, dst);
       avatarIndex[token] = filename;
       fs.writeFileSync(AVATAR_INDEX_FILE, JSON.stringify(avatarIndex, null, 2));
       res.json({ url: `/api/avatar/${token}` });
@@ -352,15 +363,25 @@ app.post("/api/projects", express.json(), (req, res) => {
   res.json({ ok: true, tokenAddress: key });
 });
 
+function withAvatar(p) {
+  const key = String(p?.tokenAddress || "").toLowerCase();
+  const filename = avatarIndex[key];
+  const file = filename ? path.join(AVATAR_DIR, filename) : "";
+  if (!filename || !fs.existsSync(file)) return { ...p, avatar: false, avatarUrl: null };
+  let version = "1";
+  try { version = String(Math.floor(fs.statSync(file).mtimeMs)); } catch { /* keep stable fallback */ }
+  return { ...p, avatar: true, avatarUrl: `/api/avatar/${key}?v=${version}` };
+}
+
 app.get("/api/projects", (_req, res) => {
-  res.json({ items: Object.values(projects) });
+  res.json({ items: Object.values(projects).map(withAvatar) });
 });
 
 app.get("/api/projects/:tokenAddress", (req, res) => {
   const key = String(req.params.tokenAddress || "").toLowerCase();
   const p = projects[key];
   if (!p) return res.status(404).json({ error: "Not found" });
-  res.json(p);
+  res.json(withAvatar(p));
 });
 
 // ========== Vanity Address ==========

@@ -13,7 +13,10 @@ contract TokenDeployer {
     address private immutable factory;
     bytes32 public immutable tokenCreationCodeHash;
     uint256 public immutable tokenCreationCodeLength;
-    mapping(bytes32 => address) private saltCommitter;
+    // Keep commitments namespaced by the committer.  A global
+    // commitment->address slot allowed an observer to copy a user's
+    // commitSalt transaction and grief the reveal before the real owner.
+    mapping(address => mapping(bytes32 => bool)) private saltCommitter;
 
     constructor(address _factory, bytes32 _creationCodeHash, uint256 _creationCodeLength) {
         factory = _factory;
@@ -22,7 +25,8 @@ contract TokenDeployer {
     }
 
     function commitSalt(bytes32 commitment) external {
-        saltCommitter[commitment] = msg.sender;
+        if (commitment == bytes32(0)) revert CommitMismatch();
+        saltCommitter[msg.sender][commitment] = true;
     }
 
     function revealAndDeploy(bytes calldata initCode, bytes32 salt, address user) external returns (address token) {
@@ -31,8 +35,8 @@ contract TokenDeployer {
         bytes32 prefixHash = keccak256(initCode[:tokenCreationCodeLength]);
         if (prefixHash != tokenCreationCodeHash) revert CreateFailed();
         bytes32 commitment = keccak256(abi.encode(user, salt, initCode));
-        if (saltCommitter[commitment] != user) revert CommitMismatch();
-        delete saltCommitter[commitment];
+        if (user == address(0) || !saltCommitter[user][commitment]) revert CommitMismatch();
+        delete saltCommitter[user][commitment];
 
         bytes memory code = initCode;
         assembly {

@@ -118,7 +118,7 @@ export default function CreateWizard() {
     if (!isAddress(w.dev)) return `${t("wz_dev")}: ${t("err_addr")}`;
     if (w.mktOn && w.mktWallet && !isAddress(w.mktWallet)) return `${t("wz_mkt_wallet")}: ${t("err_addr")}`;
     if (w.holderToken === "custom" && !isAddress(w.customCa)) return `${t("wz_custom_ca")}: ${t("err_addr")}`;
-    if (w.capBNB < 0.01) return `${t("wz_goal")}: >= 0.01 BNB`;
+    if (w.capBNB < 0.1) return `${t("wz_goal")}: >= 0.1 BNB`;
     if (feeOverflow) return t("wz_allocation_warn");
     if (w.vanityOn && w.vanitySuffix.toLowerCase() !== "bbbb") return `${t("wz_vanity_suffix")}: bbbb`;
     return null;
@@ -178,12 +178,16 @@ export default function CreateWizard() {
         setStage("vanity", { state: "ok", info: lang === "zh" ? "random salt" : "random salt" });
       }
 
-      setStage("commit", { state: "run" });
       const predicted = vanityAddr || "";
-      const commitment = computeCommitment(addr!, salt, initCode);
-      const deployer = new Contract(deployerAddr, DEPLOYER_ABI, signer);
-      txs.push(await waitTx("commitSalt", deployer.commitSalt(commitment)));
-      setStage("commit", { state: "ok", info: predicted || "committed" });
+      if (w.vanityOn) {
+        setStage("commit", { state: "run" });
+        const commitment = computeCommitment(addr!, salt, initCode);
+        const deployer = new Contract(deployerAddr, DEPLOYER_ABI, signer);
+        txs.push(await waitTx("commitSalt", deployer.commitSalt(commitment)));
+        setStage("commit", { state: "ok", info: predicted || "committed" });
+      } else {
+        setStage("commit", { state: "ok", info: lang === "zh" ? "无需 commit（普通发射）" : "not required" });
+      }
 
       setStage("deploy", { state: "run" });
       const duration = w.mode === "time" ? Math.round(w.durH * 3600) : 30 * 86400;
@@ -200,33 +204,35 @@ export default function CreateWizard() {
       // 未开分红时奖励代币传零地址，避免 ethers 解析空字符串报 UNCONFIGURED_NAME
       const divReward = divId === 0 ? ZeroAddress : divId === 2 ? rewardAddr(w.lpToken) : rewardAddr(w.holderToken);
       const divMin = divId === 2 ? parseUnits(String(w.lpMin), 0) : divId === 1 ? parseUnits(String(w.holderMin), 0) : 0n;
-      // 单笔原子交易：部署 + Mint/税率/税收分配/分红 全部一起上链，
-      // 任一步失败整笔回退，绝不留半配置状态。
-      const depTx = await factory.launchProjectDeterministicAndConfigure(
-        initCode, w.name, w.sym, w.dev, marketing, base, salt, addr!,
-        // mint
-        w.mode === "wl",
-        BigInt(Math.round(w.poolPercent * 10)),
-        1000n,
-        parseEther(String(w.minMint)),
-        parseEther(String(w.maxMint)),
-        parseEther(String(w.walletCap)),
-        parseEther(String(w.capBNB)),
-        duration,
-        // tax
-        BigInt(Math.round(w.buy * 10)),
-        BigInt(Math.round(w.sell * 10)),
-        BigInt(Math.round(w.transfer * 10)),
-        // fee distribution
-        BigInt(w.mktOn ? w.feeMkt : 0),
-        BigInt(w.buybackOn ? w.feeBb : 0),
-        BigInt(w.feeLiq),
-        BigInt(w.holderOn || w.lpOn || w.bdOn ? w.feeSelf : 0),
-        // dividend
-        divId,
-        divReward,
-        divMin,
-      );
+      const mintArgs = [
+        w.mode === "wl", BigInt(Math.round(w.poolPercent * 10)), 1000n,
+        parseEther(String(w.minMint)), parseEther(String(w.maxMint)),
+        parseEther(String(w.walletCap)), parseEther(String(w.capBNB)), duration,
+      ] as const;
+      const taxArgs = [BigInt(Math.round(w.buy * 10)), BigInt(Math.round(w.sell * 10)), BigInt(Math.round(w.transfer * 10))] as const;
+      const feeArgs = [
+        BigInt(w.mktOn ? w.feeMkt : 0), BigInt(w.buybackOn ? w.feeBb : 0),
+        BigInt(w.feeLiq), BigInt(w.holderOn || w.lpOn || w.bdOn ? w.feeSelf : 0),
+      ] as const;
+
+      let depTx: ContractTransactionResponse;
+      if (w.vanityOn) {
+        // Strict bbbb entry point: the factory rejects a non-vanity CREATE2
+        // result in the same transaction.
+        depTx = await factory.launchProjectDeterministicAndConfigure(
+          initCode, w.name, w.sym, w.dev, marketing, base, salt, addr!,
+          ...mintArgs, ...taxArgs, ...feeArgs, divId, divReward, divMin,
+        );
+      } else {
+        // Ordinary launches use the factory's internal salt generation and the
+        // same atomic configuration path as vanity launches.  This prevents a
+        // token from being left live but unusable when a follow-up config tx is
+        // rejected or times out.
+        depTx = await factory.launchProjectAndConfigure(
+          initCode, w.name, w.sym, w.dev, marketing, base,
+          ...mintArgs, ...taxArgs, ...feeArgs, divId, divReward, divMin,
+        );
+      }
       toast(`${t("wz_deploy")} · ${t("tx_sent")}`);
       const rc = await depTx.wait();
       txs.push(depTx.hash);
@@ -234,13 +240,32 @@ export default function CreateWizard() {
       for (const log of rc?.logs ?? []) {
         try {
           const ev = factoryIface.parseLog({ topics: [...log.topics], data: log.data });
-          if (ev && ev.name === "ProjectLaunched2") { tokenAddr = ev.args.token as string; break; }
+          if (ev && (ev.name === "ProjectLaunched2" || ev.name === "ProjectLaunched")) {
+            tokenAddr = ev.args.token as string;
+            if (ev.name === "ProjectLaunched2") break;
+          }
         } catch { /* not ours */ }
+      }
+      if (!tokenAddr || !isAddress(tokenAddr)) throw new Error("部署交易未返回代币地址");
+      if (w.vanityOn && !tokenAddr.toLowerCase().endsWith(w.vanitySuffix.toLowerCase())) {
+        throw new Error(`靓号校验失败：实际地址 ${tokenAddr}`);
       }
       setResult({ ca: tokenAddr, salt, txs });
       setStage("deploy", { state: "ok", info: tokenAddr });
-      // 配置随部署原子完成，无需单独 config 步
-      setStage("config", { state: "ok", info: "atomic" });
+
+      setStage("config", { state: "run" });
+      // Mint/tax/fee/dividend configuration is already applied atomically by
+      // the factory.  Whitelist addresses intentionally remain a separate
+      // post-deploy transaction so the creator can edit the list after the
+      // token exists (and add more addresses later from the detail page).
+      // Whitelist mode deliberately writes addresses after deployment.  This
+      // makes the creation transaction usable even when the list is edited
+      // later, while the detail page can append more addresses on-chain.
+      if (w.mode === "wl") {
+        const wl = parseWl(w.wlAddrs);
+        if (wl.length > 0) txs.push(await waitTx("configWhitelist", factory.configWhitelist(tokenAddr, wl, true)));
+      }
+      setStage("config", { state: "ok", info: w.mode === "wl" ? "mint + whitelist" : (w.vanityOn ? "atomic" : "configured") });
       setConfigDone(true);
 
       setStage("verify", { state: "run" });
@@ -504,8 +529,8 @@ export default function CreateWizard() {
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
                     <div className="flex items-baseline justify-between"><Lbl>毕业目标 (capBNB)</Lbl><span className="font-mono2 text-sm font-bold text-gold2">{w.capBNB} BNB</span></div>
-                    <input type="range" min={0.01} max={50} step={0.01} value={w.capBNB} onChange={(e) => set({ capBNB: +e.target.value })} className="w-full" />
-                    <p className="mt-1 text-[11px] text-fog">达到此金额即毕业上 PancakeSwap，最低 0.01 BNB</p>
+                    <input type="range" min={0.1} max={50} step={0.01} value={w.capBNB} onChange={(e) => set({ capBNB: +e.target.value })} className="w-full" />
+                    <p className="mt-1 text-[11px] text-fog">达到此金额即毕业上 PancakeSwap，最低 0.1 BNB</p>
                   </div>
                   <div>
                     <Lbl>Mint 配置（实时）</Lbl>

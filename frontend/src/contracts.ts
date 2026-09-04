@@ -6,27 +6,59 @@ import type { Token } from "./data";
 
 /* ---------------- env config ---------------- */
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string) || "https://bstocks-api.kimi-vault.com";
-export const ENV_FACTORY: string = "0xEC1979dbaFa65e3B646cbB4471Dce950245EBA27";
+export const ENV_FACTORY: string = "0xd7029BfA0fa29511395348E3CfB7aa5165098925";
 
 export const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 export const PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73";
 
-let cachedFactory = ENV_FACTORY;
+let cachedFactory: string | null = null;
+let factoryResolve: Promise<string> | null = null;
+
+function validAddress(value: unknown): value is string {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
+}
 
 export async function resolveFactoryAddress(): Promise<string> {
   if (cachedFactory) return cachedFactory;
-  try {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 5000);
-    const r = await fetch(`${API_BASE}/api/config`, { signal: ctl.signal });
-    clearTimeout(timer);
-    const j = (await r.json()) as { factoryAddress?: string };
-    if (j.factoryAddress && /^0x[0-9a-fA-F]{40}$/.test(j.factoryAddress)) {
-      cachedFactory = j.factoryAddress;
+  if (factoryResolve) return factoryResolve;
+  factoryResolve = (async () => {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 5000);
+      const r = await fetch(`${API_BASE}/api/config?ts=${Date.now()}`, {
+        signal: ctl.signal,
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      clearTimeout(timer);
+      const j = await r.json() as { factoryAddress?: unknown; chainId?: unknown };
+      const chainId = Number(j.chainId);
+      if (r.ok && validAddress(j.factoryAddress) && (!j.chainId || chainId === 97)) {
+        // Do not accept a stale/empty server value.  A code check also catches
+        // a tunnel that accidentally points at an old deployment.
+        try {
+          const code = await readOnlyProvider().getCode(j.factoryAddress);
+          if (code && code !== "0x") {
+            cachedFactory = j.factoryAddress;
+            return cachedFactory;
+          }
+        } catch {
+          // RPC may be temporarily unavailable; the address format/chain
+          // checks above are still useful and the configured fallback below
+          // keeps the UI usable.
+          cachedFactory = j.factoryAddress;
+          return cachedFactory;
+        }
+      }
+    } catch { /* backend offline */ }
+    if (validAddress(ENV_FACTORY)) {
+      cachedFactory = ENV_FACTORY;
       return cachedFactory;
     }
-  } catch { /* backend offline */ }
-  return "";
+    return "";
+  })();
+  try { return await factoryResolve; }
+  finally { factoryResolve = null; }
 }
 
 /* ---------------- ABIs ---------------- */
@@ -43,8 +75,10 @@ export const FACTORY_ABI = [
   "function registered(address) view returns (bool)",
   "function parentOf(address) view returns (address)",
   "function communityPool() view returns (uint256)",
+  "function launchProject(bytes,string,string,address,address,address) returns (address)",
   "function launchProjectDeterministic(bytes,string,string,address,address,address,bytes32,address) returns (address)",
   "function launchProjectDeterministicAndConfigure(bytes,string,string,address,address,address,bytes32,address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint8,address,uint256) returns (address)",
+  "function launchProjectAndConfigure(bytes,string,string,address,address,address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint8,address,uint256) returns (address)",
   "function configMint(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
   "function configTax(address,uint256,uint256,uint256)",
   "function configFeeDistribution(address,uint256,uint256,uint256,uint256)",
@@ -81,6 +115,11 @@ export const TOKEN_ABI = [
   "function graduated() view returns (bool)",
   "function mintEnabled() view returns (bool)",
   "function mintCapped() view returns (bool)",
+  "function minMint() view returns (uint256)",
+  "function maxMint() view returns (uint256)",
+  "function walletCap() view returns (uint256)",
+  "function mintStart() view returns (uint256)",
+  "function mintEnd() view returns (uint256)",
   "function whitelistOnly() view returns (bool)",
   "function poolPercent() view returns (uint256)",
   "function buyTax() view returns (uint256)",
@@ -107,7 +146,7 @@ export const tokenIface = new Interface(TOKEN_ABI);
 export const pairIface = new Interface(PAIR_ABI);
 
 export function factoryContract(provider: JsonRpcProvider | BrowserProvider, addr?: string) {
-  return new Contract(addr || cachedFactory, FACTORY_ABI, provider);
+  return new Contract(addr || cachedFactory || ENV_FACTORY, FACTORY_ABI, provider);
 }
 
 export function tokenContract(addr: string, provider: JsonRpcProvider | BrowserProvider) {
@@ -222,6 +261,8 @@ export type ProjectMeta = {
   pool: string;
   creator: string;
   createdAt: number;
+  avatar?: boolean;
+  avatarUrl?: string;
 };
 
 export async function fetchProjectsMeta(): Promise<Record<string, ProjectMeta>> {
@@ -447,6 +488,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
       const div1 = r.dec("div1").ok ? r.dec("div1").v : undefined;
       const div2 = r.dec("div2").ok ? r.dec("div2").v : undefined;
       const div3 = r.dec("div3").ok ? r.dec("div3").v : undefined;
+      const activeDiv = (div1?.[0] as boolean) ? div1 : (div2?.[0] as boolean) ? div2 : (div3?.[0] as boolean) ? div3 : undefined;
       const rewardLabel = (d: unknown[] | undefined): string => {
         const token = (d?.[1] as string) ?? "";
         if (!token || token === ZERO_ADDR) return "本币";
@@ -490,7 +532,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         mech: {
           burn: 0,
           mkt: Number((g("marketingShare") as bigint) ?? 0n) / 10,
-          holder: div1 && (div1[0] as boolean) ? rewardLabel(div1) : "—",
+           holder: activeDiv ? rewardLabel(activeDiv) : "—",
           buyback: Number((g("buyBackShare") as bigint) ?? 0n) / 10,
           lp: Number((g("liquidityBackflowShare") as bigint) ?? 0n) / 10,
           dv: Number((g("dividendShare") as bigint) ?? 0n) / 10,
@@ -499,7 +541,7 @@ export async function loadProjects(factoryAddr: string): Promise<LoadResult> {
         },
         spark: [],
         mcapSym: pool,
-        avatar: "1",
+         avatar: meta?.avatarUrl || (meta?.avatar ? avatarUrl(r.addr) : undefined),
         twitter: meta?.twitter,
         tg: meta?.telegram,
         creator: meta?.creator,
