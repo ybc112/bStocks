@@ -633,7 +633,7 @@ export default function CreateWizard() {
 
             {step === 3 && (
               <div className="fade-in space-y-3">
-                <p className="mb-4 text-[12.5px] text-fog"><Icon name="info" size={13} className="mr-1.5 inline text-gold" />持币分红、加池分红、燃烧分红三选一；营销和回购可独立开启。</p>
+                <p className="mb-4 text-[12.5px] text-fog"><Icon name="info" size={13} className="mr-1.5 inline text-gold" />当前仅开放持币分红；加池分红、燃烧分红稍后开放。营销和回购可独立开启。</p>
 
                 <Tgl on={w.mktOn} set={(v) => set({ mktOn: v })} icon="gift" label={t("mech_mkt")}>
                   <input className="field font-mono2" value={w.mktWallet} onChange={(e) => set({ mktWallet: e.target.value })} placeholder={`${t("wz_mkt_wallet")} 0x…`} />
@@ -664,31 +664,9 @@ export default function CreateWizard() {
                   </div>
                 </Tgl>
 
-                <Tgl on={w.lpOn} set={(v) => set({ lpOn: v, holderOn: v ? false : w.holderOn, bdOn: v ? false : w.bdOn })} icon="drop" label={t("mech_lp")}>
-                  <div className="mb-3">
-                    <div className="flex items-baseline justify-between"><Lbl>加池分红税点</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w.feeSelf / 10).toFixed(1)}%</span></div>
-                    <input type="range" min={0} max={800} step={10} value={w.feeSelf} onChange={(e) => set({ feeSelf: +e.target.value })} className="w-full" />
+                <div className="rounded-xl border border-line bg-panel2/50 p-3 text-[11.5px] leading-relaxed text-fog">
+                    <Icon name="info" size={12} className="mr-1.5 inline text-gold" />加池分红、燃烧分红暂未开放（后端分批上线），当前只使用持币分红。
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div><Lbl>{t("wz_reward_token")}</Lbl>
-                      <div className="flex flex-wrap gap-1.5">
-                        {["BNB", "USDT", "native", "pool", "custom"].map((o) => (
-                          <button key={o} onClick={() => set({ lpToken: o })}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${w.lpToken === o ? "border-gold bg-gold/12 text-gold2" : "border-line text-fog hover:border-gold/40"}`}>{optLabel(o)}</button>
-                        ))}
-                      </div>
-                    </div>
-                    <div><Lbl>{t("wz_lp_min")} · {t("wz_lp_min_note")}</Lbl><input type="number" step={0.1} className="field font-mono2" value={w.lpMin} onChange={(e) => set({ lpMin: +e.target.value })} /></div>
-                  </div>
-                </Tgl>
-
-                <Tgl on={w.bdOn} set={(v) => set({ bdOn: v, holderOn: v ? false : w.holderOn, lpOn: v ? false : w.lpOn })} icon="fire" label={t("mech_burndiv")}>
-                  <div className="mb-3">
-                    <div className="flex items-baseline justify-between"><Lbl>燃烧分红税点</Lbl><span className="font-mono2 text-xs font-bold text-gold2">{(w.feeSelf / 10).toFixed(1)}%</span></div>
-                    <input type="range" min={0} max={800} step={10} value={w.feeSelf} onChange={(e) => set({ feeSelf: +e.target.value })} className="w-full" />
-                  </div>
-                  <p className="text-[12px] leading-relaxed text-fog">{t("wz_burndiv_note")} · {t("wz_reward_token")}: {optLabel(w.holderToken)}</p>
-                </Tgl>
 
                 {feeOverflow && (
                   <p className="mt-3 rounded-lg border border-rosey/40 bg-rosey/6 px-3 py-2 text-[11px] text-rosey">
