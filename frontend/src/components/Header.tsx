@@ -167,8 +167,8 @@ export default function Header() {
 
             <div className="hidden items-center gap-1 md:flex">
               {[
-                { n: "x", href: "https://x.com/bstocks_pad", label: "Twitter X" },
-                { n: "tg", href: "https://t.me/bstocks_pad", label: "Telegram" },
+                { n: "x", href: "https://x.com/bStocksLauchpad", label: "Twitter X" },
+                { n: "tg", href: "https://t.me/bStocksLauchpad", label: "Telegram" },
                 { n: "debox", href: "https://debox.pro/bstocks", label: "Debox" },
               ].map((s) => (
                 <a key={s.n} href={s.href} target="_blank" rel="noreferrer" title={s.label}
@@ -216,7 +216,7 @@ export default function Header() {
             ))}
             <div className="mt-2 flex gap-2 border-t border-line pt-3">
               {[
-                { n: "x", href: "https://x.com/bstocks_binance/" },
+                { n: "x", href: "https://x.com/bStocksLauchpad" },
                 { n: "tg", href: "https://t.me/bStocksLauchpad" },
                 { n: "debox", href: "https://m.debox.pro/group?id=eoawrnur&code=y3o8dduj" },
               ].map((s) => (

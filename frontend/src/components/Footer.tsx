@@ -3,7 +3,7 @@ import { Icon, Logo, useI18n } from "./ui";
 export default function Footer() {
   const { lang, t } = useI18n();
   const socials = [
-    { n: "x", label: "Twitter X", handle: "@bstocks_binance", href: "https://x.com/bstocks_binance/", c: "#e9eeff" },
+    { n: "x", label: "Twitter X", handle: "@bStocksLauchpad", href: "https://x.com/bStocksLauchpad", c: "#e9eeff" },
     { n: "tg", label: "Telegram", handle: "t.me/bStocksLauchpad", href: "https://t.me/bStocksLauchpad", c: "#38e1ff" },
     { n: "debox", label: "Debox", handle: "m.debox.pro/group", href: "https://m.debox.pro/group?id=eoawrnur&code=y3o8dduj", c: "#9b6bff" },
   ];
